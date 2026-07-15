@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-15
+
 ### Changed
 
 - **Deployment.** Deno Deploy is now linked directly to the GitHub repo — pushes to `main`
@@ -71,5 +73,6 @@ Initial release. Everything below shipped together as the first cut of the sandb
 - Deployment is currently manual via `deployctl` — GitHub-linked auto-deploy is planned for the next
   version.
 
-[Unreleased]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/optlsnd/uploadcare-uploader-sandbox/releases/tag/v0.1.0
