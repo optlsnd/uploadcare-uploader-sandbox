@@ -157,6 +157,13 @@ ADMIN_USER=admin ADMIN_PASS=super-secret deno task start
 
 `POST /admin/logout` clears the cookie and deletes the KV session entry.
 
+## Versioning
+
+Semantic versioning. `deno.json` holds the current version; user-facing changes land in
+[`CHANGELOG.md`](./CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+Each milestone branch appends its changes under `## [Unreleased]`; releases move that content into a
+versioned section, bump `deno.json`, and are tagged `vX.Y.Z` on `main`.
+
 ## Deployment
 
 Personal Deno Deploy project, deployed via `deployctl`:
