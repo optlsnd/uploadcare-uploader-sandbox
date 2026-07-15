@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.deno/
+data/
+node_modules/
+
+# Claude Code conversation exports (`/export`)
+/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt

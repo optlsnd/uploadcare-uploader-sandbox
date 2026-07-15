@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Uploadcare Uploader Sandbox</title>
+    <link rel="stylesheet" href="/sandbox.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1.31.2/web/uc-file-uploader-regular.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1.31.2/web/uc-file-uploader-inline.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1.31.2/web/uc-file-uploader-minimal.min.css"
+    />
+  </head>
+  <body>
+    <header>
+      <h1>Uploadcare Uploader Sandbox</h1>
+      <p class="subtitle">
+        Configure the uploader via URL query params, upload files, and let the sandbox capture
+        debugging data.
+      </p>
+    </header>
+
+    <section id="uploader-slot" class="uploader-slot"></section>
+
+    <section class="panel">
+      <details open>
+        <summary>Resolved configuration</summary>
+        <div id="config-panel"></div>
+      </details>
+    </section>
+
+    <script type="module" src="/sandbox.js"></script>
+  </body>
+</html>

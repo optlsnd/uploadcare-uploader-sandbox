@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin · Uploadcare Uploader Sandbox</title>
+    <link rel="stylesheet" href="/sandbox.css" />
+  </head>
+  <body>
+    <header class="session-header">
+      <div class="admin-title-row">
+        <h1>Sessions</h1>
+        <form method="POST" action="/admin/logout" class="logout-form">
+          <button type="submit">Log out</button>
+        </form>
+      </div>
+      <div id="admin-meta" class="session-meta"></div>
+    </header>
+
+    <section class="session-controls">
+      <form id="filter-form" class="filter-form">
+        <input type="text" id="filter-userId" placeholder="userId" autocomplete="off" />
+        <input type="text" id="filter-pubkey" placeholder="pubkey" autocomplete="off" />
+        <input type="text" id="filter-label" placeholder="label" autocomplete="off" />
+        <label class="filter-check">
+          <input type="checkbox" id="filter-hasError" />
+          has errors
+        </label>
+        <button type="submit">Apply</button>
+        <button type="reset">Clear</button>
+      </form>
+    </section>
+
+    <section id="results"></section>
+
+    <script type="module" src="/admin.js"></script>
+  </body>
+</html>

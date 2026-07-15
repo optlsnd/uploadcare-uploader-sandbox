@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session · Uploadcare Uploader Sandbox</title>
+    <link rel="stylesheet" href="/sandbox.css" />
+  </head>
+  <body>
+    <nav id="session-nav" class="session-nav" hidden>
+      <a id="nav-back" href="/admin">← Back to admin</a>
+      <a id="nav-prev" class="nav-arrow" hidden>← Previous</a>
+      <a id="nav-next" class="nav-arrow" hidden>Next →</a>
+    </nav>
+
+    <header class="session-header">
+      <h1 id="session-title">Session</h1>
+      <div id="session-meta" class="session-meta"></div>
+    </header>
+
+    <section id="env-panel" class="env-panel" hidden></section>
+
+    <section class="session-controls" id="session-controls" hidden>
+      <div class="filters" id="filters"></div>
+      <input
+        type="search"
+        id="search"
+        class="search-input"
+        placeholder="Search events…"
+        autocomplete="off"
+      />
+      <div class="actions">
+        <button type="button" id="copy-json">Copy JSON</button>
+        <button type="button" id="download-json">Download</button>
+      </div>
+    </section>
+
+    <section class="timeline" id="timeline"></section>
+
+    <script type="module" src="/session.js"></script>
+  </body>
+</html>

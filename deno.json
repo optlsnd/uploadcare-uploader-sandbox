@@ -1,0 +1,16 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-read --allow-write --allow-env --unstable-kv main.ts",
+    "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env --unstable-kv main.ts",
+    "test": "deno test --allow-net --allow-read --allow-write --allow-env --unstable-kv",
+    "deploy": "deployctl deploy --project=uploader-sandbox --entrypoint=main.ts --include=main.ts,static"
+  },
+  "imports": {
+    "@std/http": "jsr:@std/http@^1.0.12"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}

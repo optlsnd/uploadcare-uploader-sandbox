@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin login · Uploadcare Uploader Sandbox</title>
+    <link rel="stylesheet" href="/sandbox.css" />
+  </head>
+  <body>
+    <div class="login-wrap">
+      <h1>Admin login</h1>
+      <p id="login-error" class="login-error" hidden>Invalid credentials.</p>
+      <form method="POST" action="/admin/login" class="login-form">
+        <label>
+          User
+          <input type="text" name="user" autocomplete="username" autofocus required />
+        </label>
+        <label>
+          Password
+          <input type="password" name="pass" autocomplete="current-password" required />
+        </label>
+        <input type="hidden" name="next" id="next" value="/admin" />
+        <button type="submit">Log in</button>
+      </form>
+    </div>
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.search);
+        if (params.get("error")) document.getElementById("login-error").hidden = false;
+        const next = params.get("next");
+        if (next && next.startsWith("/") && !next.startsWith("//")) {
+          document.getElementById("next").value = next;
+        }
+      })();
+    </script>
+  </body>
+</html>
