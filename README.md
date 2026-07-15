@@ -166,16 +166,51 @@ versioned section, bump `deno.json`, and are tagged `vX.Y.Z` on `main`.
 
 ## Deployment
 
-Personal Deno Deploy project, deployed via `deployctl`:
+Deployed to a personal Deno Deploy project. Primary flow: **GitHub-linked auto-deploy** — every push
+to `main` deploys to production and every PR gets its own preview URL. The `deployctl` CLI stays
+available as a manual fallback.
+
+### One-time Deno Deploy setup
+
+1. Sign in to [dash.deno.com](https://dash.deno.com/) with the same GitHub account that owns the
+   repo (`optlsnd`).
+2. **New Project** → **Import from GitHub** → select `optlsnd/uploadcare-uploader-sandbox`.
+3. Configure:
+   - **Entrypoint**: `main.ts`
+   - **Install step**: leave empty (no build).
+   - **Build step**: leave empty (Deno runs the source directly).
+   - **Root directory**: leave as the repo root.
+   - **Production branch**: `main`.
+   - **Preview deployments**: on (the default). Every PR gets its own URL.
+4. Add environment variables (**Settings → Environment Variables**), scoped to both Production and
+   Preview:
+   - `ADMIN_USER` — admin dashboard username
+   - `ADMIN_PASS` — admin dashboard password (use a strong one)
+
+   Without these, `/admin*` responds with **503**, so the sandbox itself still works publicly.
+5. Deno KV is provisioned automatically — no path config, no secret. The `KV_PATH` env var is only
+   read outside Deploy (local dev), so leave it unset on Deploy.
+
+Subsequent deploys are automatic. The dashboard shows commit SHA, deploy status, and a link to the
+live URL for each deployment.
+
+### Manual fallback via `deployctl`
+
+If the GitHub link is disconnected or you need to deploy from a local branch:
 
 ```sh
-deno task deploy    # deployctl deploy --project=uploader-sandbox --entrypoint=main.ts --include=main.ts,static
+deployctl login              # once per machine
+deno task deploy             # deployctl deploy --project=uploader-sandbox --entrypoint=main.ts --include=main.ts,static
 ```
 
-First deploy: run `deployctl login` if you haven't signed in.
+### What the code already assumes on Deploy
 
-Set the admin credentials as Deno Deploy env vars (`ADMIN_USER`, `ADMIN_PASS`) via the Deploy
-dashboard so `/admin` is protected on the deployed instance.
+No branching or feature flags — `main.ts` reads `DENO_DEPLOYMENT_ID` to distinguish local dev from
+Deploy:
+
+- KV opens with no path on Deploy (managed KV) and falls back to `./data/kv.db` locally.
+- Static files skip the `Cache-Control: no-store` header on Deploy so the Deploy CDN can cache them.
+- `PORT` is read from the env; Deno Deploy sets it, local dev defaults to `8000`.
 
 ## Project layout
 
@@ -315,8 +350,9 @@ EOF
       panel above the timeline that summarizes the snapshot and lists per-host reachability. New
       `env` category on the filter tab collects `probe-host`, `probe-summary`, and
       `env-network-change` events.
-- [ ] **9. Deploy from GitHub.** Link the repo to Deno Deploy so pushes to `main` auto-deploy
-      (removing the manual `deployctl deploy` step). Deferred until the repo is pushed.
+- [x] **9. Deploy from GitHub.** Deno Deploy project linked to the GitHub repo. Pushes to `main`
+      auto-deploy to production; PRs get preview URLs. `deployctl` remains as a manual fallback.
+      Setup is documented under [Deployment](#deployment).
 
 ## Design decisions
 

@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Deployment.** Deno Deploy is now linked directly to the GitHub repo — pushes to `main`
+  auto-deploy to production and PRs get preview URLs. `deployctl` stays as a manual fallback. See
+  [Deployment](./README.md#deployment) for the one-time dashboard setup.
+
 ## [0.1.0] — 2026-07-15
 
 Initial release. Everything below shipped together as the first cut of the sandbox.
