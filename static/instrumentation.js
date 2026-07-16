@@ -306,16 +306,60 @@ onNetworkChange((snapshot) => {
 
 // Speedtest is opt-in via ?speedtest=1 because a real measurement burns
 // bandwidth on the customer's connection. Dynamic import so the library
-// only loads for triage links that ask for it.
+// only loads for triage links that ask for it. A fixed-position banner
+// stays visible for the duration so users know not to close the tab.
+function mountSpeedtestBanner() {
+  const wrap = document.createElement("div");
+  wrap.className = "speedtest-banner";
+  wrap.setAttribute("role", "status");
+  wrap.setAttribute("aria-live", "polite");
+  const spinner = document.createElement("span");
+  spinner.className = "speedtest-spinner";
+  const text = document.createElement("span");
+  text.className = "speedtest-text";
+  text.textContent = "Measuring your connection — please don't close this tab.";
+  wrap.append(spinner, text);
+  (document.body ?? document.documentElement).append(wrap);
+  return {
+    setPhase(phase) {
+      text.textContent = phase === "download"
+        ? "Measuring download speed — please don't close this tab."
+        : "Measuring upload speed — please don't close this tab.";
+    },
+    finish(result) {
+      wrap.classList.add("done");
+      wrap.removeChild(spinner);
+      const d = result?.download && "mbps" in result.download ? result.download.mbps : null;
+      const u = result?.upload && "mbps" in result.upload ? result.upload.mbps : null;
+      text.textContent = d !== null || u !== null
+        ? `Speedtest complete: ${d ?? "?"} Mbps down · ${u ?? "?"} Mbps up`
+        : "Speedtest complete.";
+      setTimeout(() => wrap.remove(), 4000);
+    },
+    fail(err) {
+      wrap.classList.add("error");
+      wrap.removeChild(spinner);
+      text.textContent = `Speedtest failed: ${err}`;
+      setTimeout(() => wrap.remove(), 6000);
+    },
+  };
+}
+
 try {
   const params = new URLSearchParams(location.search);
   if (params.get("speedtest") === "1") {
     (async () => {
+      const banner = mountSpeedtestBanner();
       try {
         const { runSpeedtest } = await import("/lib/speedtest.js");
-        const result = await runSpeedtest({ fetch: originalFetch });
+        const result = await runSpeedtest({
+          fetch: originalFetch,
+          onPhaseStart: (phase) => banner.setPhase(phase),
+        });
+        banner.finish(result);
         emit("speedtest", result);
       } catch (err) {
+        banner.fail(err);
         emit("speedtest", { error: String(err) });
       }
     })();

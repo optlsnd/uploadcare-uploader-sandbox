@@ -92,6 +92,38 @@ Deno.test("runSpeedtest: returns both halves + startedAt/finishedAt", async () =
   assert(result.finishedAt >= result.startedAt);
 });
 
+Deno.test("runSpeedtest: onPhaseStart/onPhaseEnd fire in download-then-upload order", async () => {
+  const fetchStub = () => Promise.resolve(new Response(new Uint8Array(10), { status: 200 }));
+  const events: string[] = [];
+  await runSpeedtest({
+    downloadBytes: 10,
+    uploadBytes: 10,
+    fetch: fetchStub,
+    now: fixedNow([0, 1, 2, 3]),
+    onPhaseStart: (phase) => events.push(`start:${phase}`),
+    onPhaseEnd: (phase) => events.push(`end:${phase}`),
+  });
+  assertEquals(events, ["start:download", "end:download", "start:upload", "end:upload"]);
+});
+
+Deno.test("runSpeedtest: phase callbacks fire even when a half errors", async () => {
+  const fetchStub = (url: string) => {
+    if (url.includes("__down")) return Promise.reject(new Error("nope"));
+    return Promise.resolve(new Response("ok", { status: 200 }));
+  };
+  const events: string[] = [];
+  await runSpeedtest({
+    downloadBytes: 10,
+    uploadBytes: 10,
+    fetch: fetchStub,
+    now: fixedNow([0, 1, 2, 3]),
+    onPhaseStart: (phase) => events.push(`start:${phase}`),
+    onPhaseEnd: (phase) => events.push(`end:${phase}`),
+  });
+  // download errored but callbacks still fire; upload succeeded.
+  assertEquals(events, ["start:download", "end:download", "start:upload", "end:upload"]);
+});
+
 Deno.test("runSpeedtest: partial failure — download errors, upload ok", async () => {
   const fetchStub = (url: string) => {
     if (url.includes("__down")) return Promise.reject(new Error("down blocked"));

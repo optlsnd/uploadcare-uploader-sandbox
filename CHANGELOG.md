@@ -13,7 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   real download + upload throughput against `speed.cloudflare.com`, emits a `speedtest` event with
   `{download, upload, startedAt, finishedAt}`. Bundled at the top of the session view's Environment
   panel. Uses ~15 MB and 10–20 s of the customer's bandwidth, hence opt-in via a query flag so
-  support triage adds it deliberately. Off by default.
+  support triage adds it deliberately. Off by default. A fixed-position banner with a spinner is
+  shown for the duration of the test ("Measuring download speed…" → "Measuring upload speed…" →
+  result summary that self-clears after a few seconds) so users don't close the tab mid-test.
 - **Delete session from admin.** Every row in `/admin` grew a `×` button. Click, confirm, and the
   session record, all its events, and both index entries are deleted. Backed by
   `DELETE /api/admin/session/:id` — admin-gated, returns 404 for unknown ids.

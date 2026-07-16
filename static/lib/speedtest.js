@@ -83,22 +83,41 @@ export async function uploadSpeed(opts = {}) {
 
 /**
  * Run a sequential download-then-upload probe. Both halves swallow their
- * own errors so a partial result is always returned.
- * @param {{ downloadBytes?: number, uploadBytes?: number, fetch?: (input: string, init?: RequestInit) => Promise<Response>, now?: () => number, clock?: () => number }} [opts]
+ * own errors so a partial result is always returned. Optional phase
+ * callbacks let a UI show progress without racing the emit path.
+ *
+ * @param {{
+ *   downloadBytes?: number,
+ *   uploadBytes?: number,
+ *   fetch?: (input: string, init?: RequestInit) => Promise<Response>,
+ *   now?: () => number,
+ *   clock?: () => number,
+ *   onPhaseStart?: (phase: "download" | "upload") => void,
+ *   onPhaseEnd?: (phase: "download" | "upload", result: SpeedResult | { error: string, bytes: number }) => void,
+ * }} [opts]
  * @returns {Promise<SpeedtestResult>}
  */
 export async function runSpeedtest(opts = {}) {
   const clock = opts.clock ?? (() => Date.now());
+  const onPhaseStart = opts.onPhaseStart ?? (() => {});
+  const onPhaseEnd = opts.onPhaseEnd ?? (() => {});
   const startedAt = clock();
+
+  onPhaseStart("download");
   const download = await downloadSpeed({
     bytes: opts.downloadBytes,
     fetch: opts.fetch,
     now: opts.now,
   });
+  onPhaseEnd("download", download);
+
+  onPhaseStart("upload");
   const upload = await uploadSpeed({
     bytes: opts.uploadBytes,
     fetch: opts.fetch,
     now: opts.now,
   });
+  onPhaseEnd("upload", upload);
+
   return { download, upload, startedAt, finishedAt: clock() };
 }
