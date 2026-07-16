@@ -504,6 +504,29 @@ code {
   color: var(--accent);
 }
 
+.sessions-table .row-actions {
+  text-align: right;
+}
+
+.row-delete {
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.row-delete:hover {
+  color: #e5484d;
+  border-color: #e5484d;
+}
+
 .admin-title-row {
   display: flex;
   align-items: center;
