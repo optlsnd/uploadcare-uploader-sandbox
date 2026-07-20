@@ -73,7 +73,24 @@ function pushFiltersToUrl(f) {
   history.replaceState(null, "", url);
 }
 
-function renderTable(sessions, filters) {
+async function deleteSession(sessionId, onSuccess) {
+  const label = shortId(sessionId);
+  if (!confirm(`Delete session ${label}? This is permanent.`)) return;
+  try {
+    const res = await fetch(`/api/admin/session/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      alert(`Delete failed: HTTP ${res.status}`);
+      return;
+    }
+    onSuccess();
+  } catch (err) {
+    alert(`Delete failed: ${err}`);
+  }
+}
+
+function renderTable(sessions, filters, onDeleted) {
   const results = document.getElementById("results");
   results.innerHTML = "";
   if (sessions.length === 0) {
@@ -94,10 +111,20 @@ function renderTable(sessions, filters) {
       el("th", { class: "num", text: "events" }),
       el("th", { class: "num", text: "errors" }),
       el("th", {}),
+      el("th", {}),
     ]),
   ]);
   const tbody = el("tbody");
   for (const s of sessions) {
+    const deleteBtn = el("button", {
+      type: "button",
+      class: "row-delete",
+      title: `Delete session ${s.sessionId}`,
+      text: "×",
+    });
+    deleteBtn.addEventListener("click", () => {
+      deleteSession(s.sessionId, onDeleted);
+    });
     const tr = el("tr", { class: s.errorCount > 0 ? "has-errors" : "" }, [
       el("td", { text: fmtAbsolute(s.createdAt), title: String(s.createdAt) }),
       el(
@@ -114,6 +141,7 @@ function renderTable(sessions, filters) {
         { class: "num" + (s.errorCount > 0 ? " err" : ""), text: String(s.errorCount ?? 0) },
       ),
       el("td", {}, [el("a", { href: viewHref(s.sessionId), text: "view →" })]),
+      el("td", { class: "row-actions" }, [deleteBtn]),
     ]);
     tbody.append(tr);
   }
@@ -138,7 +166,7 @@ async function fetchAndRender() {
     meta.textContent = `${sessions.length} session${
       sessions.length === 1 ? "" : "s"
     } · newest first`;
-    renderTable(sessions, filters);
+    renderTable(sessions, filters, fetchAndRender);
   } catch (err) {
     meta.textContent = `Failed to load sessions: ${err}`;
   }

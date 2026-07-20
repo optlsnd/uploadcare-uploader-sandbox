@@ -495,6 +495,34 @@ export async function handleSessionGet(
   return json({ session: entry.value, events });
 }
 
+/**
+ * Delete a session and every artifact keyed under it: the session
+ * record, both index entries, and every event row. The `["user", ...]`
+ * record is intentionally left alone — a user may own other sessions,
+ * and even if this was their only one, the anonymous user record
+ * itself is negligible in size.
+ */
+export async function handleAdminDeleteSession(
+  kv: Deno.Kv,
+  sessionId: string,
+): Promise<Response> {
+  const entry = await kv.get<SessionRecord>(["session", sessionId]);
+  if (!entry.value) return json({ error: "session not found" }, { status: 404 });
+  const session = entry.value;
+
+  let deletedEvents = 0;
+  for await (const e of kv.list({ prefix: ["event", sessionId] })) {
+    await kv.delete(e.key);
+    deletedEvents++;
+  }
+
+  await kv.delete(["session", sessionId]);
+  await kv.delete(["session_index", session.createdAt, sessionId]);
+  await kv.delete(["session_by_user", session.userId, session.createdAt, sessionId]);
+
+  return json({ ok: true, deletedEvents });
+}
+
 export async function handleEventPost(
   kv: Deno.Kv,
   req: Request,
@@ -567,6 +595,7 @@ function notImplemented(label: string): Response {
 
 const SESSION_API_RE = /^\/api\/session\/([^/]+)$/;
 const ADMIN_NEIGHBORS_RE = /^\/api\/admin\/session\/([^/]+)\/neighbors$/;
+const ADMIN_SESSION_RE = /^\/api\/admin\/session\/([^/]+)$/;
 const SESSION_VIEW_RE = /^\/session\/([^/]+)$/;
 
 export function createHandler(
@@ -604,6 +633,12 @@ export function createHandler(
         neighborsMatch[1]!,
         readSessionFilters(url),
       );
+    }
+    const adminSessionMatch = pathname.match(ADMIN_SESSION_RE);
+    if (req.method === "DELETE" && adminSessionMatch) {
+      const denied = await checkAdminAuth(kv, req, admin);
+      if (denied) return denied;
+      return handleAdminDeleteSession(kv, adminSessionMatch[1]!);
     }
     if (pathname.startsWith("/api/")) return notImplemented(`API ${pathname}`);
     if (pathname === "/admin/login") {
