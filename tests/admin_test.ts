@@ -694,3 +694,136 @@ Deno.test("createHandler: GET /api/admin/session/:id/neighbors gated by auth", a
     assertEquals(body.next, "sA");
   });
 });
+
+/* -------- DELETE /api/admin/session/:id -------- */
+
+Deno.test("DELETE session removes record, events, and both indexes", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(
+      kv,
+      post("/api/session", {
+        userId: "u1",
+        sessionId: "sX",
+        env: { url: "http://x/?pubkey=pk" },
+      }),
+    );
+    await handleEventPost(
+      kv,
+      post("/api/event", {
+        userId: "u1",
+        sessionId: "sX",
+        events: [
+          { seq: 0, ts: 1, kind: "fetch", status: 200 },
+          { seq: 1, ts: 2, kind: "js-error", message: "x" },
+        ],
+      }),
+    );
+
+    const session = (await kv.get<SessionRecord>(["session", "sX"])).value;
+    assert(session);
+    const handler = createHandler(kv, ADMIN);
+    const res = await handler(
+      new Request("http://x/api/admin/session/sX", {
+        method: "DELETE",
+        headers: { authorization: basicAuth("admin", "s3cret") },
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.ok, true);
+    assertEquals(body.deletedEvents, 2);
+
+    // Session gone
+    const gone = await kv.get(["session", "sX"]);
+    assertEquals(gone.value, null);
+    // Events gone
+    let leftover = 0;
+    for await (const _ of kv.list({ prefix: ["event", "sX"] })) leftover++;
+    assertEquals(leftover, 0);
+    // Index rows gone
+    const idx = await kv.get(["session_index", session!.createdAt, "sX"]);
+    assertEquals(idx.value, null);
+    const userIdx = await kv.get(["session_by_user", "u1", session!.createdAt, "sX"]);
+    assertEquals(userIdx.value, null);
+  });
+});
+
+Deno.test("DELETE session that doesn't exist → 404", async () => {
+  await withKv(async (kv) => {
+    const handler = createHandler(kv, ADMIN);
+    const res = await handler(
+      new Request("http://x/api/admin/session/nope", {
+        method: "DELETE",
+        headers: { authorization: basicAuth("admin", "s3cret") },
+      }),
+    );
+    assertEquals(res.status, 404);
+    await res.body?.cancel();
+  });
+});
+
+Deno.test("DELETE session without auth → 401", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(
+      kv,
+      post("/api/session", { userId: "u1", sessionId: "sX", env: {} }),
+    );
+    const handler = createHandler(kv, ADMIN);
+    const res = await handler(
+      new Request("http://x/api/admin/session/sX", { method: "DELETE" }),
+    );
+    assertEquals(res.status, 401);
+    await res.body?.cancel();
+    // Session must still exist
+    const s = await kv.get(["session", "sX"]);
+    assert(s.value);
+  });
+});
+
+Deno.test("DELETE session with admin not configured → 503", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(
+      kv,
+      post("/api/session", { userId: "u1", sessionId: "sX", env: {} }),
+    );
+    const handler = createHandler(kv, null);
+    const res = await handler(
+      new Request("http://x/api/admin/session/sX", { method: "DELETE" }),
+    );
+    assertEquals(res.status, 503);
+    await res.body?.cancel();
+  });
+});
+
+Deno.test("DELETE one session doesn't touch a sibling", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(
+      kv,
+      post("/api/session", { userId: "u1", sessionId: "sA", env: {} }),
+    );
+    await handleSessionPost(
+      kv,
+      post("/api/session", { userId: "u1", sessionId: "sB", env: {} }),
+    );
+    await handleEventPost(
+      kv,
+      post("/api/event", {
+        userId: "u1",
+        sessionId: "sB",
+        events: [{ seq: 0, ts: 1, kind: "fetch", status: 200 }],
+      }),
+    );
+    const handler = createHandler(kv, ADMIN);
+    await handler(
+      new Request("http://x/api/admin/session/sA", {
+        method: "DELETE",
+        headers: { authorization: basicAuth("admin", "s3cret") },
+      }),
+    );
+    const sB = await kv.get<SessionRecord>(["session", "sB"]);
+    assert(sB.value);
+    let events = 0;
+    for await (const _ of kv.list({ prefix: ["event", "sB"] })) events++;
+    assertEquals(events, 1);
+  });
+});

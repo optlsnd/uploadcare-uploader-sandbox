@@ -11,6 +11,7 @@ import {
 import { randomUUID } from "/lib/id.js";
 import { captureBaseline, captureNetwork, onNetworkChange } from "/lib/env.js";
 import { DEFAULT_HOSTS, probeHost } from "/lib/probes.js";
+import { isEngagementEvent } from "/lib/engagement.js";
 
 const SESSION_ENDPOINT = "/api/session";
 const EVENT_ENDPOINT = "/api/event";
@@ -50,6 +51,34 @@ let seq = 0;
 const buffer = [];
 let flushTimer = null;
 
+// Session promotion: the session is only registered on the server once
+// the user has actually engaged (upload activity or any error). Until
+// promoted, events pile up client-side and never touch the network.
+let promoted = false;
+let promotionPromise = null;
+
+function promoteSession() {
+  if (promotionPromise) return promotionPromise;
+  promotionPromise = originalFetch(SESSION_ENDPOINT, {
+    method: "POST",
+    headers: { "content-type": "application/json", [BEACON_HEADER]: "1" },
+    body: JSON.stringify({
+      userId,
+      sessionId,
+      startedAt: Date.now(),
+      env: collectEnv(),
+    }),
+    keepalive: true,
+  }).then(() => {
+    promoted = true;
+  }, () => {
+    // Even if the POST fails, mark promoted so buffered events still
+    // try to flush — the event handler will synthesize a session record.
+    promoted = true;
+  });
+  return promotionPromise;
+}
+
 function isOwnBeacon(url, headers) {
   if (
     url.endsWith(EVENT_ENDPOINT) ||
@@ -61,14 +90,20 @@ function isOwnBeacon(url, headers) {
 }
 
 function emit(kind, data) {
-  buffer.push({
+  const ev = {
     ts: Date.now(),
     seq: seq++,
     userId,
     sessionId,
     kind,
     ...data,
-  });
+  };
+  buffer.push(ev);
+  if (!promotionPromise && isEngagementEvent(ev)) {
+    promoteSession().then(() => flush());
+    return;
+  }
+  if (!promoted) return; // hold events until engagement
   if (buffer.length >= FLUSH_BATCH_SIZE) {
     flush();
   } else if (!flushTimer) {
@@ -81,6 +116,7 @@ function flush(useBeacon = false) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
+  if (!promoted) return; // never ship unengaged sessions
   if (buffer.length === 0) return;
   const batch = buffer.splice(0, buffer.length);
   const payload = JSON.stringify({ userId, sessionId, events: batch });
@@ -252,29 +288,83 @@ if ("PerformanceObserver" in globalThis) {
   } catch { /* older browsers */ }
 }
 
-// ---------- session registration ----------
+// ---------- session snapshot ----------
+// `collectEnv` is invoked lazily by promoteSession() so its snapshot
+// reflects the state at engagement time. Runs may span a
+// `navigator.connection.change` — that's fine, the subscriber below
+// keeps updates flowing as events.
 function collectEnv() {
   const baseline = captureBaseline();
   const network = captureNetwork();
   return { ...baseline, ...network };
 }
 
-originalFetch(SESSION_ENDPOINT, {
-  method: "POST",
-  headers: { "content-type": "application/json", [BEACON_HEADER]: "1" },
-  body: JSON.stringify({
-    userId,
-    sessionId,
-    startedAt: Date.now(),
-    env: collectEnv(),
-  }),
-  keepalive: true,
-}).catch(() => {/* tolerate 501 stub */});
-
 // Follow up on network condition changes during the session.
 onNetworkChange((snapshot) => {
   emit("env-network-change", snapshot);
 });
+
+// Speedtest is opt-in via ?speedtest=1 because a real measurement burns
+// bandwidth on the customer's connection. Dynamic import so the library
+// only loads for triage links that ask for it. A fixed-position banner
+// stays visible for the duration so users know not to close the tab.
+function mountSpeedtestBanner() {
+  const wrap = document.createElement("div");
+  wrap.className = "speedtest-banner";
+  wrap.setAttribute("role", "status");
+  wrap.setAttribute("aria-live", "polite");
+  const spinner = document.createElement("span");
+  spinner.className = "speedtest-spinner";
+  const text = document.createElement("span");
+  text.className = "speedtest-text";
+  text.textContent = "Measuring your connection — please don't close this tab.";
+  wrap.append(spinner, text);
+  (document.body ?? document.documentElement).append(wrap);
+  return {
+    setPhase(phase) {
+      text.textContent = phase === "download"
+        ? "Measuring download speed — please don't close this tab."
+        : "Measuring upload speed — please don't close this tab.";
+    },
+    finish(result) {
+      wrap.classList.add("done");
+      wrap.removeChild(spinner);
+      const d = result?.download && "mbps" in result.download ? result.download.mbps : null;
+      const u = result?.upload && "mbps" in result.upload ? result.upload.mbps : null;
+      text.textContent = d !== null || u !== null
+        ? `Speedtest complete: ${d ?? "?"} Mbps down · ${u ?? "?"} Mbps up`
+        : "Speedtest complete.";
+      setTimeout(() => wrap.remove(), 4000);
+    },
+    fail(err) {
+      wrap.classList.add("error");
+      wrap.removeChild(spinner);
+      text.textContent = `Speedtest failed: ${err}`;
+      setTimeout(() => wrap.remove(), 6000);
+    },
+  };
+}
+
+try {
+  const params = new URLSearchParams(location.search);
+  if (params.get("speedtest") === "1") {
+    (async () => {
+      const banner = mountSpeedtestBanner();
+      try {
+        const { runSpeedtest } = await import("/lib/speedtest.js");
+        const result = await runSpeedtest({
+          fetch: originalFetch,
+          onPhaseStart: (phase) => banner.setPhase(phase),
+        });
+        banner.finish(result);
+        emit("speedtest", result);
+      } catch (err) {
+        banner.fail(err);
+        emit("speedtest", { error: String(err) });
+      }
+    })();
+  }
+} catch { /* location not readable */ }
 
 // Fire host reachability probes in parallel. Each result is emitted as
 // an event so the timeline shows them in order; a single summary event

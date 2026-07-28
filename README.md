@@ -49,17 +49,19 @@ Open `http://localhost:8000/?pubkey=YOUR_PUBLIC_KEY` and upload a file.
 Tests run with Deno's built-in runner against an in-memory KV (`Deno.openKv(":memory:")`) — no port
 binding, no shared state between tests. Suites:
 
-| File                      | Covers                                                                                                    |
-| ------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `tests/config_test.ts`    | Query-string parsing, kebab-case conversion, reserved-key split.                                          |
-| `tests/serialize_test.ts` | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                        |
-| `tests/server_test.ts`    | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                       |
-| `tests/session_test.ts`   | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.        |
-| `tests/admin_test.ts`     | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating. |
-| `tests/presets_test.ts`   | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).            |
-| `tests/id_test.ts`        | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                    |
-| `tests/env_test.ts`       | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.      |
-| `tests/probes_test.ts`    | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                 |
+| File                       | Covers                                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `tests/config_test.ts`     | Query-string parsing, kebab-case conversion, reserved-key split.                                          |
+| `tests/serialize_test.ts`  | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                        |
+| `tests/server_test.ts`     | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                       |
+| `tests/session_test.ts`    | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.        |
+| `tests/admin_test.ts`      | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating. |
+| `tests/presets_test.ts`    | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).            |
+| `tests/id_test.ts`         | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                    |
+| `tests/env_test.ts`        | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.      |
+| `tests/probes_test.ts`     | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                 |
+| `tests/engagement_test.ts` | `isEngagementEvent` promotes on upload activity / any error; ignores env, perf, and passive events.       |
+| `tests/speedtest_test.ts`  | `downloadSpeed` / `uploadSpeed` math + error paths; `runSpeedtest` partial failure isolation.             |
 
 Every future milestone ships with matching tests as part of the same step.
 
@@ -77,12 +79,13 @@ kebab-case are accepted; camelCase is normalized to kebab-case before being appl
 
 Reserved sandbox-only params (never forwarded to the uploader):
 
-| Param      | Purpose                                                    |
-| ---------- | ---------------------------------------------------------- |
-| `variant`  | Uploader variant: `regular` (default), `inline`, `minimal` |
-| `label`    | Free-form tag attached to the session                      |
-| `scenario` | Apply a named preset (see below)                           |
-| `_debug`   | Enable extra debug UI                                      |
+| Param       | Purpose                                                                           |
+| ----------- | --------------------------------------------------------------------------------- |
+| `variant`   | Uploader variant: `regular` (default), `inline`, `minimal`                        |
+| `label`     | Free-form tag attached to the session                                             |
+| `scenario`  | Apply a named preset (see below)                                                  |
+| `_debug`    | Enable extra debug UI                                                             |
+| `speedtest` | `1` runs a Cloudflare-backed speed probe on load. Off by default (~15 MB traffic) |
 
 If `pubkey` is missing, the sandbox falls back to `demopublickey` (Uploadcare's public demo key) so
 the uploader always mounts. Any user-supplied `pubkey` overrides the default. All other params fall
@@ -124,6 +127,10 @@ The dashboard defaults to `?hasError=true` when opened with no filters — the c
 entry point. Adding any explicit filter (even just `?userId=x`) turns off that default so links like
 `/admin?userId=…` show all of a user's sessions. Filter state is mirrored to the URL as you edit the
 form, so it's bookmarkable and shareable.
+
+**Deleting a session.** Every row has an `×` button. Click it and confirm to permanently delete the
+session record, all its events, and both index entries. The anonymous user record is left in place
+(a user may own other sessions). Backed by `DELETE /api/admin/session/:id`, admin-gated.
 
 **Session-to-session navigation.** On `/session/:id`, admins see a Back / Previous / Next bar. The
 "Previous" and "Next" targets come from `GET /api/admin/session/:id/neighbors?<filters>`, which
@@ -234,6 +241,8 @@ static/
     presets.js            # named scenario bundles for ?scenario=<name>
     env.js                # browser env snapshot + navigator.connection subscriber
     probes.js             # parallel host-reachability HEAD probes
+    engagement.js         # "did the user actually use this session?" predicate
+    speedtest.js          # opt-in Cloudflare download/upload speed probe
 tests/
   server_test.ts          # session/event handlers against :memory: KV
   config_test.ts          # config.js unit tests
@@ -263,6 +272,7 @@ bodies are ever recorded — only metadata.
 | `probe-host`          | Uploadcare host reachability check (one per host)    | host, url, ok, ms, status, type / error, message                           |
 | `probe-summary`       | Emitted once after all probes finish                 | startedAt, finishedAt, results[]                                           |
 | `env-network-change`  | `navigator.connection.change` fires during session   | onLine, connection {effectiveType, downlink, rtt, saveData, type}          |
+| `speedtest`           | Emitted once when `?speedtest=1` (Cloudflare probe)  | download {bytes,ms,mbps} \| {error}, upload {bytes,ms,mbps} \| {error}     |
 
 **Header safelist.** Anything not on the safelist (auth tokens, cookies, signatures, etc.) is
 dropped. Current list lives in `instrumentation.js` and covers content headers, caching,
@@ -302,6 +312,13 @@ Deno Deploy, KV is managed and no file lives with the repo.
 the event handler creates a minimal session record and its index entries. A later `/api/session`
 merges into that record and preserves the original `createdAt` — so index keys stay stable and no
 duplicates are created.
+
+**Engagement gating.** The client only calls `/api/session` (and starts flushing events) once the
+user has actually engaged with the uploader OR something went wrong. Engagement triggers are:
+`file-added`, `file-upload-start`, `common-upload-start`, any `js-error` / `unhandled-rejection` /
+`fetch-error` / `xhr-error`, or a `console.error`. Sessions where a visitor lands and leaves without
+touching the uploader (and without anything erroring) never reach the server — nothing to store,
+nothing to clean up. See [`static/lib/engagement.js`](./static/lib/engagement.js).
 
 **Bodies are never stored.** The client strips request/response bodies at the source; the server
 just persists what it receives.
@@ -353,6 +370,10 @@ EOF
 - [x] **9. Deploy from GitHub.** Deno Deploy project linked to the GitHub repo. Pushes to `main`
       auto-deploy to production; PRs get preview URLs. `deployctl` remains as a manual fallback.
       Setup is documented under [Deployment](#deployment).
+- [x] **10. Engagement, speedtest, and admin delete.** Sessions are only sent to the server on first
+      uploader activity (or first error) — visitors who never engage cost nothing. Optional
+      `?speedtest=1` runs a Cloudflare download/upload probe and emits a `speedtest` event. Admin
+      dashboard has a per-row `×` delete button backed by `DELETE /api/admin/session/:id`.
 
 ## Design decisions
 

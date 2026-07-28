@@ -14,7 +14,12 @@ export function classifyEvent(ev) {
   if (kind === "console" && ev.level === "error") return "error";
   if (kind === "uploader-event") return "uploader";
   if (kind === "perf-resource") return "perf";
-  if (kind === "probe-host" || kind === "probe-summary" || kind === "env-network-change") {
+  if (
+    kind === "probe-host" ||
+    kind === "probe-summary" ||
+    kind === "env-network-change" ||
+    kind === "speedtest"
+  ) {
     return "env";
   }
   return "other";
@@ -73,6 +78,16 @@ export function summarizeEvent(ev) {
       return `online=${ev.onLine} · ${c.effectiveType ?? "?"} · ${c.downlink ?? "?"}Mbps · rtt ${
         c.rtt ?? "?"
       }ms`;
+    }
+    case "speedtest": {
+      if (ev.error) return `speedtest failed: ${ev.error}`;
+      const d = ev.download;
+      const u = ev.upload;
+      const dStr = d && typeof d.mbps === "number"
+        ? `${d.mbps} Mbps down`
+        : `down: ${d?.error ?? "?"}`;
+      const uStr = u && typeof u.mbps === "number" ? `${u.mbps} Mbps up` : `up: ${u?.error ?? "?"}`;
+      return `${dStr} · ${uStr}`;
     }
     default:
       return String(kind ?? "unknown");

@@ -175,12 +175,34 @@ function renderProbeTable(latestByHost) {
   return table;
 }
 
+function renderSpeedtest(ev) {
+  const dl = el("dl", { class: "env-kv" });
+  if (ev.error) {
+    dl.append(el("dt", { text: "Speedtest" }));
+    dl.append(el("dd", { text: `failed: ${ev.error}` }));
+    return dl;
+  }
+  const fmt = (r) => {
+    if (!r) return "—";
+    if (r.error) return `error: ${r.error}`;
+    return `${r.mbps} Mbps (${r.bytes ?? "?"} B in ${r.ms ?? "?"} ms)`;
+  };
+  dl.append(el("dt", { text: "Download" }));
+  dl.append(el("dd", { text: fmt(ev.download) }));
+  dl.append(el("dt", { text: "Upload" }));
+  dl.append(el("dd", { text: fmt(ev.upload) }));
+  return dl;
+}
+
 function renderEnvPanel(section, session, events) {
   section.innerHTML = "";
   const probesByHost = new Map();
+  let latestSpeedtest = null;
   for (const ev of events) {
     if (ev?.kind === "probe-host" && typeof ev.host === "string") {
       probesByHost.set(ev.host, ev);
+    } else if (ev?.kind === "speedtest") {
+      latestSpeedtest = ev;
     }
   }
 
@@ -189,6 +211,11 @@ function renderEnvPanel(section, session, events) {
 
   const envEntries = envSummaryEntries(session?.env);
   if (envEntries.length) wrap.append(renderEnvKV(envEntries));
+
+  if (latestSpeedtest) {
+    wrap.append(el("h3", { class: "env-subheader", text: "Measured network speed" }));
+    wrap.append(renderSpeedtest(latestSpeedtest));
+  }
 
   if (probesByHost.size) {
     wrap.append(el("h3", { class: "env-subheader", text: "Uploadcare host reachability" }));
