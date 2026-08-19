@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-16
+
 ### Added
 
 - **`?speedtest=1`** — opt-in Cloudflare-backed network speed probe. Runs on page load, measures
@@ -97,6 +99,7 @@ Initial release. Everything below shipped together as the first cut of the sandb
 - Deployment is currently manual via `deployctl` — GitHub-linked auto-deploy is planned for the next
   version.
 
-[Unreleased]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/optlsnd/uploadcare-uploader-sandbox/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/optlsnd/uploadcare-uploader-sandbox/releases/tag/v0.1.0
