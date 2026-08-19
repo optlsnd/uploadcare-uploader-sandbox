@@ -28,12 +28,11 @@ async function jsonBody(res: Response): Promise<Record<string, unknown>> {
   return await res.json();
 }
 
-Deno.test("handleSessionPost: creates user + session, extracts pubkey/label", async () => {
+Deno.test("handleSessionPost: creates session, extracts pubkey/label, indexes it", async () => {
   await withKv(async (kv) => {
     const res = await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "s1",
         env: { url: "http://x/?pubkey=pk1&label=lbl1" },
       }),
@@ -47,18 +46,21 @@ Deno.test("handleSessionPost: creates user + session, extracts pubkey/label", as
     assertEquals(session.eventCount, 0);
     assert(session.indexed);
 
-    const user = await kv.get(["user", "u1"]);
-    assert(user.value);
-    const userIdx = await kv.get([
-      "user_index",
-      (user.value as { createdAt: number }).createdAt,
-      "u1",
-    ]);
-    assertEquals(userIdx.value, "u1");
     const sessionIdx = await kv.get(["session_index", session.createdAt, "s1"]);
     assertEquals(sessionIdx.value, "s1");
-    const byUser = await kv.get(["session_by_user", "u1", session.createdAt, "s1"]);
-    assertEquals(byUser.value, "s1");
+  });
+});
+
+Deno.test("handleSessionPost: user entity is no longer created", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(
+      kv,
+      post("/api/session", { sessionId: "s1", env: {} }),
+    );
+    // No ["user", ...] entries, no ["user_index", ...], no ["session_by_user", ...].
+    assertEquals(await countPrefix(kv, ["user"]), 0);
+    assertEquals(await countPrefix(kv, ["user_index"]), 0);
+    assertEquals(await countPrefix(kv, ["session_by_user"]), 0);
   });
 });
 
@@ -67,7 +69,6 @@ Deno.test("handleSessionPost: idempotent re-post preserves createdAt / pubkey / 
     const res1 = await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "s1",
         startedAt: 1000,
         env: { url: "http://x/?pubkey=p1&label=l1" },
@@ -78,7 +79,6 @@ Deno.test("handleSessionPost: idempotent re-post preserves createdAt / pubkey / 
     const res2 = await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "s1",
         startedAt: 9999,
         env: { url: "http://x/?pubkey=p2&label=l2" },
@@ -90,19 +90,29 @@ Deno.test("handleSessionPost: idempotent re-post preserves createdAt / pubkey / 
     assertEquals(second.pubkey, "p1");
     assertEquals(second.label, "l1");
 
-    // No duplicate indexes: exactly one session_index entry
     const entries: unknown[] = [];
     for await (const e of kv.list({ prefix: ["session_index"] })) entries.push(e.value);
     assertEquals(entries.length, 1);
   });
 });
 
-Deno.test("handleSessionPost: rejects missing userId/sessionId", async () => {
+Deno.test("handleSessionPost: rejects missing sessionId", async () => {
   await withKv(async (kv) => {
-    const res = await handleSessionPost(kv, post("/api/session", { userId: "u1" }));
+    const res = await handleSessionPost(kv, post("/api/session", {}));
     assertEquals(res.status, 400);
     const body = await jsonBody(res);
     assert(String(body.error).includes("required"));
+  });
+});
+
+Deno.test("handleSessionPost: tolerates legacy userId field on the body", async () => {
+  await withKv(async (kv) => {
+    // Old clients might still send userId. Server should ignore it and succeed.
+    const res = await handleSessionPost(
+      kv,
+      post("/api/session", { userId: "legacy", sessionId: "s1", env: {} }),
+    );
+    assertEquals(res.status, 200);
   });
 });
 
@@ -110,12 +120,11 @@ Deno.test("handleEventPost: stores events and bumps eventCount", async () => {
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "s1", env: {} }),
+      post("/api/session", { sessionId: "s1", env: {} }),
     );
     const res = await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "s1",
         events: [
           { seq: 0, ts: 1, kind: "fetch" },
@@ -136,12 +145,11 @@ Deno.test("handleEventPost: stores events and bumps eventCount", async () => {
   });
 });
 
-Deno.test("handleEventPost: event before session synthesizes session with indexes", async () => {
+Deno.test("handleEventPost: event before session synthesizes session with index", async () => {
   await withKv(async (kv) => {
     const res = await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "s1",
         events: [{ seq: 0, ts: 1, kind: "perf-resource" }],
       }),
@@ -163,7 +171,6 @@ Deno.test("handleEventPost: subsequent handleSessionPost merges into synthetic",
     await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "s1",
         events: [{ seq: 0, ts: 1, kind: "perf-resource" }],
       }),
@@ -173,7 +180,6 @@ Deno.test("handleEventPost: subsequent handleSessionPost merges into synthetic",
     await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "s1",
         startedAt: 42,
         env: { url: "http://x/?pubkey=pk&label=lbl" },
@@ -191,7 +197,7 @@ Deno.test("handleEventPost: subsequent handleSessionPost merges into synthetic",
 
 Deno.test("handleEventPost: rejects malformed body", async () => {
   await withKv(async (kv) => {
-    const res = await handleEventPost(kv, post("/api/event", { userId: "u1" }));
+    const res = await handleEventPost(kv, post("/api/event", {}));
     assertEquals(res.status, 400);
   });
 });
@@ -200,7 +206,7 @@ Deno.test("handleEventPost: empty events => stored 0, no writes", async () => {
   await withKv(async (kv) => {
     const res = await handleEventPost(
       kv,
-      post("/api/event", { userId: "u1", sessionId: "s1", events: [] }),
+      post("/api/event", { sessionId: "s1", events: [] }),
     );
     assertEquals(res.status, 200);
     assertEquals((await jsonBody(res)).stored, 0);
@@ -212,13 +218,11 @@ Deno.test("handleEventPost: empty events => stored 0, no writes", async () => {
 Deno.test("upsertSession: records clientIp on first sight only", async () => {
   await withKv(async (kv) => {
     const s1 = await upsertSession(kv, {
-      userId: "u1",
       sessionId: "s1",
       clientIp: "1.2.3.4",
     });
     assertEquals(s1.clientIp, "1.2.3.4");
     const s2 = await upsertSession(kv, {
-      userId: "u1",
       sessionId: "s1",
       clientIp: "5.6.7.8",
     });
@@ -244,13 +248,11 @@ Deno.test("createHandler: dispatches routes", async () => {
     const apiUnknown = await handler(new Request("http://x/api/nope"));
     assertEquals(apiUnknown.status, 501);
 
-    const okBody = { userId: "u1", sessionId: "s1", env: {} };
-    const apiSession = await handler(post("/api/session", okBody));
+    const apiSession = await handler(post("/api/session", { sessionId: "s1", env: {} }));
     assertEquals(apiSession.status, 200);
 
     const beacon = await handler(
       post("/api/event-beacon", {
-        userId: "u1",
         sessionId: "s1",
         events: [{ seq: 0, ts: 1, kind: "x" }],
       }),

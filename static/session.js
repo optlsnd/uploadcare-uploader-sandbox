@@ -24,7 +24,7 @@ function sessionIdFromPath() {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-const FILTER_KEYS = ["userId", "pubkey", "label", "hasError"];
+const FILTER_KEYS = ["pubkey", "label", "hasError"];
 
 function readFilterParams() {
   const src = new URLSearchParams(location.search);
@@ -73,7 +73,7 @@ function fmtDuration(ms) {
   return `${m}m ${s}s`;
 }
 
-function renderMeta(container, session, durationMs, adminMode) {
+function renderMeta(container, session, durationMs) {
   container.innerHTML = "";
   const add = (text) => container.append(document.createTextNode(text));
   const sep = () => container.append(document.createTextNode(" · "));
@@ -85,17 +85,6 @@ function renderMeta(container, session, durationMs, adminMode) {
   };
   if (session.pubkey) push(() => add(`pubkey: ${session.pubkey}`));
   if (session.label) push(() => add(`label: ${session.label}`));
-  push(() => {
-    add("user: ");
-    if (adminMode) {
-      const link = document.createElement("a");
-      link.href = `/admin?userId=${encodeURIComponent(session.userId)}`;
-      link.textContent = session.userId;
-      container.append(link);
-    } else {
-      add(session.userId);
-    }
-  });
   push(() => add(`events: ${session.eventCount ?? 0}`));
   push(() => add(`created: ${fmtAbsolute(session.createdAt)}`));
   const d = fmtDuration(durationMs);
@@ -249,7 +238,8 @@ function renderRow(ev, createdAt) {
   const errored = cat === "error" ||
     ev.kind === "fetch-error" ||
     ev.kind === "xhr-error" ||
-    (status !== null && status >= 400);
+    (status !== null && status >= 400) ||
+    !!ev.apiError;
 
   const row = el("details", {
     class: "row row-" + cat + (errored ? " row-error" : ""),
@@ -315,9 +305,25 @@ async function main() {
   }
   document.getElementById("session-title").textContent = `Session ${sessionId}`;
 
+  // Telemetry visibility is a URL flag so support links can pin it.
+  const urlParams = new URLSearchParams(location.search);
+  const includeTelemetry = urlParams.get("includeTelemetry") === "1";
+  const telemetryCheckbox = document.getElementById("include-telemetry");
+  if (telemetryCheckbox) {
+    telemetryCheckbox.checked = includeTelemetry;
+    telemetryCheckbox.addEventListener("change", () => {
+      const p = new URLSearchParams(location.search);
+      if (telemetryCheckbox.checked) p.set("includeTelemetry", "1");
+      else p.delete("includeTelemetry");
+      const qs = p.toString();
+      location.search = qs ? `?${qs}` : "";
+    });
+  }
+
   let payload;
   try {
-    const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}`);
+    const q = includeTelemetry ? "?includeTelemetry=1" : "";
+    const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}${q}`);
     if (res.status === 404) {
       showError("Session not found.");
       return;
@@ -342,11 +348,10 @@ async function main() {
   rawEvents.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
   const events = correlatePerf(rawEvents);
 
-  // Try admin-only neighbors endpoint. If it succeeds, viewer is an
-  // admin — show Back/Prev/Next nav and make the userId clickable.
-  // Public viewers get a plain read-only session view.
+  // Try admin-only neighbors endpoint. If it succeeds, the viewer is
+  // an admin and we show the Back/Prev/Next nav bar. Public viewers
+  // get a plain read-only session view.
   const filterParams = readFilterParams();
-  let adminMode = false;
   try {
     const nurl = withParams(
       `/api/admin/session/${encodeURIComponent(sessionId)}/neighbors`,
@@ -354,7 +359,6 @@ async function main() {
     );
     const nres = await fetch(nurl);
     if (nres.ok) {
-      adminMode = true;
       const { prev, next } = await nres.json();
       document.getElementById("nav-back").href = withParams("/admin", filterParams);
       if (prev) {
@@ -375,7 +379,6 @@ async function main() {
     document.getElementById("session-meta"),
     session,
     sessionDurationMs(events),
-    adminMode,
   );
 
   const counts = countByCategory(events);

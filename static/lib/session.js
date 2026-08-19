@@ -7,6 +7,9 @@ export const CATEGORIES = ["all", "network", "error", "uploader", "perf", "env",
  */
 export function classifyEvent(ev) {
   const kind = ev?.kind;
+  // Uploadcare API errors returned as HTTP 2xx with an error body are
+  // still network events, but they surface under Errors too — network
+  // remains the category so the row stays with its siblings.
   if (kind === "fetch" || kind === "fetch-error" || kind === "xhr" || kind === "xhr-error") {
     return "network";
   }
@@ -35,10 +38,17 @@ export function summarizeEvent(ev) {
   const kind = ev.kind;
   switch (kind) {
     case "fetch":
-    case "xhr":
-      return `${ev.method ?? "?"} ${ev.url ?? "?"} → ${ev.status ?? "?"} (${
+    case "xhr": {
+      const base = `${ev.method ?? "?"} ${ev.url ?? "?"} → ${ev.status ?? "?"} (${
         ev.durationMs ?? "?"
       }ms)`;
+      if (ev.apiError) {
+        const msg = ev.apiError.message ?? "API error";
+        const code = ev.apiError.code ? ` [${ev.apiError.code}]` : "";
+        return `${base} — Uploadcare API error${code}: ${msg}`;
+      }
+      return base;
+    }
     case "fetch-error":
     case "xhr-error": {
       const msg = ev.error && typeof ev.error === "object"

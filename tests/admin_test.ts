@@ -262,7 +262,6 @@ async function seedSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u1",
       sessionId: "s1",
       env: { url: "http://x/?pubkey=pk1&label=lbl-a" },
     }),
@@ -270,7 +269,6 @@ async function seedSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u2",
       sessionId: "s2",
       env: { url: "http://x/?pubkey=pk2&label=lbl-b" },
     }),
@@ -278,7 +276,6 @@ async function seedSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u1",
       sessionId: "s3",
       env: { url: "http://x/?pubkey=pk1" },
     }),
@@ -287,7 +284,6 @@ async function seedSessions(kv: Deno.Kv) {
   await handleEventPost(
     kv,
     post("/api/event", {
-      userId: "u2",
       sessionId: "s2",
       events: [
         { seq: 0, ts: 1, kind: "fetch", status: 200 },
@@ -299,7 +295,6 @@ async function seedSessions(kv: Deno.Kv) {
   await handleEventPost(
     kv,
     post("/api/event", {
-      userId: "u1",
       sessionId: "s1",
       events: [{ seq: 0, ts: 5, kind: "xhr-error", error: "network" }],
     }),
@@ -316,19 +311,6 @@ Deno.test("handleAdminSessions: lists newest-first", async () => {
     // s3 was created last, so it should be first
     assertEquals(ids[0], "s3");
     assertEquals(ids.length, 3);
-  });
-});
-
-Deno.test("handleAdminSessions: userId filter", async () => {
-  await withKv(async (kv) => {
-    await seedSessions(kv);
-    const res = await handleAdminSessions(
-      kv,
-      new URL("http://x/api/admin/sessions?userId=u1"),
-    );
-    const body = await res.json();
-    const ids = body.sessions.map((s: { sessionId: string }) => s.sessionId).sort();
-    assertEquals(ids, ["s1", "s3"]);
   });
 });
 
@@ -397,11 +379,10 @@ Deno.test("handleAdminSessions: limit clamped to 500", async () => {
 
 Deno.test("handleEventPost: bumps errorCount for error kinds", async () => {
   await withKv(async (kv) => {
-    await handleSessionPost(kv, post("/api/session", { userId: "u", sessionId: "s", env: {} }));
+    await handleSessionPost(kv, post("/api/session", { sessionId: "s", env: {} }));
     await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u",
         sessionId: "s",
         events: [
           { seq: 0, ts: 1, kind: "fetch", status: 200 },
@@ -414,6 +395,40 @@ Deno.test("handleEventPost: bumps errorCount for error kinds", async () => {
     );
     const s = await kv.get(["session", "s"]);
     assertEquals((s.value as { errorCount: number }).errorCount, 3);
+  });
+});
+
+Deno.test("handleEventPost: fetch/xhr with apiError counts as an error", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(kv, post("/api/session", { sessionId: "s", env: {} }));
+    await handleEventPost(
+      kv,
+      post("/api/event", {
+        sessionId: "s",
+        events: [
+          // Normal 2xx — no error
+          { seq: 0, ts: 1, kind: "fetch", status: 200 },
+          // 2xx but Uploadcare returned an error in the body
+          {
+            seq: 1,
+            ts: 2,
+            kind: "fetch",
+            status: 200,
+            apiError: { code: "400", message: "invalid pubkey" },
+          },
+          // Same for xhr
+          {
+            seq: 2,
+            ts: 3,
+            kind: "xhr",
+            status: 200,
+            apiError: { message: "quota exceeded" },
+          },
+        ],
+      }),
+    );
+    const s = await kv.get(["session", "s"]);
+    assertEquals((s.value as { errorCount: number }).errorCount, 2);
   });
 });
 
@@ -516,9 +531,8 @@ Deno.test("createHandler: /admin.js is public (no auth required)", async () => {
 
 Deno.test("readSessionFilters: pulls every filter out of the query string", () => {
   const f = readSessionFilters(
-    new URL("http://x/api/admin/sessions?userId=u&pubkey=p&label=l&hasError=true"),
+    new URL("http://x/api/admin/sessions?pubkey=p&label=l&hasError=true"),
   );
-  assertEquals(f.userId, "u");
   assertEquals(f.pubkey, "p");
   assertEquals(f.label, "l");
   assertEquals(f.hasError, true);
@@ -537,7 +551,6 @@ Deno.test("readSessionFilters: hasError only true when literal 'true'", () => {
 
 Deno.test("matchesSessionFilter: predicate honors each field", () => {
   const s: SessionRecord = {
-    userId: "u1",
     sessionId: "s1",
     createdAt: 1,
     lastSeenAt: 1,
@@ -549,14 +562,14 @@ Deno.test("matchesSessionFilter: predicate honors each field", () => {
     errorCount: 2,
     indexed: true,
   };
-  const none: SessionFilters = { userId: null, pubkey: null, label: null, hasError: false };
+  const none: SessionFilters = { pubkey: null, label: null, hasError: false };
   assertEquals(matchesSessionFilter(s, none), true);
   assertEquals(
-    matchesSessionFilter(s, { ...none, userId: "u1" }),
+    matchesSessionFilter(s, { ...none, pubkey: "pk" }),
     true,
   );
   assertEquals(
-    matchesSessionFilter(s, { ...none, userId: "u2" }),
+    matchesSessionFilter(s, { ...none, pubkey: "other" }),
     false,
   );
   assertEquals(
@@ -577,7 +590,6 @@ async function seedNeighborsSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u1",
       sessionId: "sA",
       startedAt: 1000,
       env: { url: "http://x/?pubkey=pk" },
@@ -586,7 +598,6 @@ async function seedNeighborsSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u2",
       sessionId: "sB",
       startedAt: 2000,
       env: { url: "http://x/?pubkey=pk" },
@@ -595,7 +606,6 @@ async function seedNeighborsSessions(kv: Deno.Kv) {
   await handleEventPost(
     kv,
     post("/api/event", {
-      userId: "u2",
       sessionId: "sB",
       events: [{ seq: 0, ts: 1, kind: "js-error" }],
     }),
@@ -603,7 +613,6 @@ async function seedNeighborsSessions(kv: Deno.Kv) {
   await handleSessionPost(
     kv,
     post("/api/session", {
-      userId: "u1",
       sessionId: "sC",
       startedAt: 3000,
       env: { url: "http://x/?pubkey=pk" },
@@ -614,7 +623,6 @@ async function seedNeighborsSessions(kv: Deno.Kv) {
 Deno.test("handleAdminSessionNeighbors: 404 for missing session", async () => {
   await withKv(async (kv) => {
     const res = await handleAdminSessionNeighbors(kv, "nope", {
-      userId: null,
       pubkey: null,
       label: null,
       hasError: false,
@@ -626,7 +634,7 @@ Deno.test("handleAdminSessionNeighbors: 404 for missing session", async () => {
 Deno.test("handleAdminSessionNeighbors: no filters — prev is newer, next is older", async () => {
   await withKv(async (kv) => {
     await seedNeighborsSessions(kv);
-    const none: SessionFilters = { userId: null, pubkey: null, label: null, hasError: false };
+    const none: SessionFilters = { pubkey: null, label: null, hasError: false };
     // sB is in the middle: prev (newer) = sC, next (older) = sA
     const middle = await (await handleAdminSessionNeighbors(kv, "sB", none)).json();
     assertEquals(middle.prev, "sC");
@@ -642,21 +650,10 @@ Deno.test("handleAdminSessionNeighbors: no filters — prev is newer, next is ol
   });
 });
 
-Deno.test("handleAdminSessionNeighbors: honors userId filter", async () => {
-  await withKv(async (kv) => {
-    await seedNeighborsSessions(kv);
-    const f: SessionFilters = { userId: "u1", pubkey: null, label: null, hasError: false };
-    // Filtered order: sC, sA (u1 only). sB is not in the set.
-    const res = await (await handleAdminSessionNeighbors(kv, "sA", f)).json();
-    assertEquals(res.prev, "sC");
-    assertEquals(res.next, null);
-  });
-});
-
 Deno.test("handleAdminSessionNeighbors: honors hasError filter", async () => {
   await withKv(async (kv) => {
     await seedNeighborsSessions(kv);
-    const f: SessionFilters = { userId: null, pubkey: null, label: null, hasError: true };
+    const f: SessionFilters = { pubkey: null, label: null, hasError: true };
     // Only sB matches. Viewed from sB: no neighbors.
     const res = await (await handleAdminSessionNeighbors(kv, "sB", f)).json();
     assertEquals(res.prev, null);
@@ -667,7 +664,7 @@ Deno.test("handleAdminSessionNeighbors: honors hasError filter", async () => {
 Deno.test("handleAdminSessionNeighbors: target still navigable even if it doesn't match filter", async () => {
   await withKv(async (kv) => {
     await seedNeighborsSessions(kv);
-    const f: SessionFilters = { userId: null, pubkey: null, label: null, hasError: true };
+    const f: SessionFilters = { pubkey: null, label: null, hasError: true };
     // From sA (no errors) with hasError filter: only sB matches. sA
     // becomes the "current" and its prev is sB.
     const res = await (await handleAdminSessionNeighbors(kv, "sA", f)).json();
@@ -697,12 +694,11 @@ Deno.test("createHandler: GET /api/admin/session/:id/neighbors gated by auth", a
 
 /* -------- DELETE /api/admin/session/:id -------- */
 
-Deno.test("DELETE session removes record, events, and both indexes", async () => {
+Deno.test("DELETE session removes record, events, and its index row", async () => {
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "sX",
         env: { url: "http://x/?pubkey=pk" },
       }),
@@ -710,7 +706,6 @@ Deno.test("DELETE session removes record, events, and both indexes", async () =>
     await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "sX",
         events: [
           { seq: 0, ts: 1, kind: "fetch", status: 200 },
@@ -733,18 +728,13 @@ Deno.test("DELETE session removes record, events, and both indexes", async () =>
     assertEquals(body.ok, true);
     assertEquals(body.deletedEvents, 2);
 
-    // Session gone
     const gone = await kv.get(["session", "sX"]);
     assertEquals(gone.value, null);
-    // Events gone
     let leftover = 0;
     for await (const _ of kv.list({ prefix: ["event", "sX"] })) leftover++;
     assertEquals(leftover, 0);
-    // Index rows gone
     const idx = await kv.get(["session_index", session!.createdAt, "sX"]);
     assertEquals(idx.value, null);
-    const userIdx = await kv.get(["session_by_user", "u1", session!.createdAt, "sX"]);
-    assertEquals(userIdx.value, null);
   });
 });
 
@@ -766,7 +756,7 @@ Deno.test("DELETE session without auth → 401", async () => {
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "sX", env: {} }),
+      post("/api/session", { sessionId: "sX", env: {} }),
     );
     const handler = createHandler(kv, ADMIN);
     const res = await handler(
@@ -784,7 +774,7 @@ Deno.test("DELETE session with admin not configured → 503", async () => {
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "sX", env: {} }),
+      post("/api/session", { sessionId: "sX", env: {} }),
     );
     const handler = createHandler(kv, null);
     const res = await handler(
@@ -799,16 +789,15 @@ Deno.test("DELETE one session doesn't touch a sibling", async () => {
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "sA", env: {} }),
+      post("/api/session", { sessionId: "sA", env: {} }),
     );
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "sB", env: {} }),
+      post("/api/session", { sessionId: "sB", env: {} }),
     );
     await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "sB",
         events: [{ seq: 0, ts: 1, kind: "fetch", status: 200 }],
       }),

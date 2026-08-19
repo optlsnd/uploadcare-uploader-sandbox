@@ -15,8 +15,7 @@ locally.
    reconfigure.
 3. The page instruments `fetch` / `XMLHttpRequest`, uploader lifecycle events, `window.onerror`,
    unhandled promise rejections, and browser environment details.
-4. Events stream to the server and land in Deno KV, keyed by an anonymous user ID (persistent) and a
-   session ID (per page load).
+4. Events stream to the server and land in Deno KV, keyed by a per-page-load session ID.
 5. Support views the captured data via a protected admin dashboard or a per-session shareable URL.
 
 ## Stack
@@ -49,19 +48,20 @@ Open `http://localhost:8000/?pubkey=YOUR_PUBLIC_KEY` and upload a file.
 Tests run with Deno's built-in runner against an in-memory KV (`Deno.openKv(":memory:")`) — no port
 binding, no shared state between tests. Suites:
 
-| File                       | Covers                                                                                                    |
-| -------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `tests/config_test.ts`     | Query-string parsing, kebab-case conversion, reserved-key split.                                          |
-| `tests/serialize_test.ts`  | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                        |
-| `tests/server_test.ts`     | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                       |
-| `tests/session_test.ts`    | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.        |
-| `tests/admin_test.ts`      | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating. |
-| `tests/presets_test.ts`    | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).            |
-| `tests/id_test.ts`         | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                    |
-| `tests/env_test.ts`        | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.      |
-| `tests/probes_test.ts`     | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                 |
-| `tests/engagement_test.ts` | `isEngagementEvent` promotes on upload activity / any error; ignores env, perf, and passive events.       |
-| `tests/speedtest_test.ts`  | `downloadSpeed` / `uploadSpeed` math + error paths; `runSpeedtest` partial failure isolation.             |
+| File                              | Covers                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `tests/config_test.ts`            | Query-string parsing, kebab-case conversion, reserved-key split.                                                             |
+| `tests/serialize_test.ts`         | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                                           |
+| `tests/server_test.ts`            | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                                          |
+| `tests/session_test.ts`           | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.                           |
+| `tests/admin_test.ts`             | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating.                    |
+| `tests/presets_test.ts`           | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).                               |
+| `tests/id_test.ts`                | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                                       |
+| `tests/env_test.ts`               | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.                         |
+| `tests/probes_test.ts`            | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                                    |
+| `tests/engagement_test.ts`        | `isEngagementEvent` promotes on upload activity / any error; ignores env, perf, and passive events.                          |
+| `tests/speedtest_test.ts`         | `downloadSpeed` / `uploadSpeed` math + error paths; `runSpeedtest` partial failure isolation.                                |
+| `tests/uploadcare_errors_test.ts` | `extractUploadcareError` covers all known Uploadcare error body shapes; `extractFromRawBody` safely parses raw JSON strings. |
 
 Every future milestone ships with matching tests as part of the same step.
 
@@ -110,35 +110,41 @@ values still win — `/?scenario=multipart&multipartMinFileSize=100` overrides t
 ## Admin dashboard
 
 `/admin` shows a table of the most recent sessions (newest first) with columns for created-at,
-session id, pubkey, label, user, event count, and error count. Sessions with any error events are
+session id, pubkey, label, event count, and error count. Sessions with any error events are
 highlighted; rows link out to `/session/:id` in a new tab.
 
 Server-side filters supported on `GET /api/admin/sessions`:
 
 | Query param     | Behavior                                           |
 | --------------- | -------------------------------------------------- |
-| `userId=…`      | Exact match on the anonymous user id.              |
 | `pubkey=…`      | Exact match on the pubkey parsed from `env.url`.   |
 | `label=…`       | Exact match on the label parsed from `env.url`.    |
 | `hasError=true` | Only sessions whose `errorCount > 0`.              |
 | `limit=N`       | Max sessions to return (default 200, clamped 500). |
 
 The dashboard defaults to `?hasError=true` when opened with no filters — the common support-workflow
-entry point. Adding any explicit filter (even just `?userId=x`) turns off that default so links like
-`/admin?userId=…` show all of a user's sessions. Filter state is mirrored to the URL as you edit the
-form, so it's bookmarkable and shareable.
+entry point. Adding any explicit filter (even just `?pubkey=…`) turns off that default. Filter state
+is mirrored to the URL as you edit the form, so it's bookmarkable and shareable.
 
 **Deleting a session.** Every row has an `×` button. Click it and confirm to permanently delete the
-session record, all its events, and both index entries. The anonymous user record is left in place
-(a user may own other sessions). Backed by `DELETE /api/admin/session/:id`, admin-gated.
+session record, all its events, and its index row. Backed by `DELETE /api/admin/session/:id`,
+admin-gated.
 
 **Session-to-session navigation.** On `/session/:id`, admins see a Back / Previous / Next bar. The
 "Previous" and "Next" targets come from `GET /api/admin/session/:id/neighbors?<filters>`, which
 respects the same filter set as the dashboard — so if you filtered `hasError=true` on `/admin` and
 clicked into a session, "Next" walks through the next error session. The Back link returns to
 `/admin` with the same filters preserved. The whole nav bar stays hidden for public viewers (401
-response from the neighbors endpoint). The `userId` line in the session meta is a link to
-`/admin?userId=…` for admins; plain text otherwise.
+response from the neighbors endpoint).
+
+**Uploadcare API errors (HTTP 2xx with error body).** The client sniffs JSON responses from
+`upload.uploadcare.com` and `api.uploadcare.com`. When the body matches a known Uploadcare error
+shape, the event gets an `apiError: {code?, message}` field, counts toward `errorCount`, and the row
+renders in red. Body content is never persisted — only the small structured summary.
+
+**Telemetry filtering.** Requests to `tlm.uploadcare.com` are tagged and hidden from the session
+timeline by default. Tick the "show telemetry" checkbox (or append `?includeTelemetry=1`) on
+`/session/:id` to see them. Data is always stored — only hidden on read.
 
 **Auth.** Credentials from `ADMIN_USER` / `ADMIN_PASS` env vars. Constant-time compare. Two ways in
 — both accepted anywhere on `/admin*` and `/api/admin/*`:
@@ -243,6 +249,7 @@ static/
     probes.js             # parallel host-reachability HEAD probes
     engagement.js         # "did the user actually use this session?" predicate
     speedtest.js          # opt-in Cloudflare download/upload speed probe
+    uploadcare_errors.js  # detects HTTP-200-with-error-body Uploadcare responses
 tests/
   server_test.ts          # session/event handlers against :memory: KV
   config_test.ts          # config.js unit tests
@@ -258,21 +265,21 @@ files (`sandbox.js`, `instrumentation.js`) stay browser-only.
 Loaded before the uploader module so patches are in place first. Runs entirely client-side; no
 bodies are ever recorded — only metadata.
 
-| Event kind            | When                                                 | Fields                                                                     |
-| --------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| `fetch`               | Any `window.fetch` completes (2xx or non-2xx)        | url, method, status, ok, durationMs, req/res header safelist, body sizes   |
-| `fetch-error`         | `fetch` rejects (network / CORS / abort)             | url, method, error {name,message}, durationMs, req headers                 |
-| `xhr`                 | `XMLHttpRequest` completes with a status             | same shape as `fetch`                                                      |
-| `xhr-error`           | XHR errors, aborts, or times out                     | url, method, error (`network`/`abort`/`timeout`), status                   |
-| `perf-resource`       | `PerformanceObserver` `resource` entry for a UC host | name, initiatorType, timings, transfer/encoded/decoded sizes, nextHopProto |
-| `uploader-event`      | Any `<uc-upload-ctx-provider>` DOM event             | name (e.g. `file-upload-failed`), sanitized `detail`                       |
-| `js-error`            | `window.error`                                       | message, filename, lineno, colno, stack                                    |
-| `unhandled-rejection` | Unhandled promise rejection                          | reason, stack                                                              |
-| `console`             | `console.warn` / `console.error` invoked             | level, sanitized args                                                      |
-| `probe-host`          | Uploadcare host reachability check (one per host)    | host, url, ok, ms, status, type / error, message                           |
-| `probe-summary`       | Emitted once after all probes finish                 | startedAt, finishedAt, results[]                                           |
-| `env-network-change`  | `navigator.connection.change` fires during session   | onLine, connection {effectiveType, downlink, rtt, saveData, type}          |
-| `speedtest`           | Emitted once when `?speedtest=1` (Cloudflare probe)  | download {bytes,ms,mbps} \| {error}, upload {bytes,ms,mbps} \| {error}     |
+| Event kind            | When                                                 | Fields                                                                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetch`               | Any `window.fetch` completes (2xx or non-2xx)        | url, method, status, ok, durationMs, req/res header safelist, body sizes, optional `apiError: {code?, message}` on 2xx Uploadcare API responses whose body carries a known error shape, `isTelemetry: true` for tlm.uploadcare.com |
+| `fetch-error`         | `fetch` rejects (network / CORS / abort)             | url, method, error {name,message}, durationMs, req headers                                                                                                                                                                         |
+| `xhr`                 | `XMLHttpRequest` completes with a status             | same shape as `fetch`                                                                                                                                                                                                              |
+| `xhr-error`           | XHR errors, aborts, or times out                     | url, method, error (`network`/`abort`/`timeout`), status                                                                                                                                                                           |
+| `perf-resource`       | `PerformanceObserver` `resource` entry for a UC host | name, initiatorType, timings, transfer/encoded/decoded sizes, nextHopProto                                                                                                                                                         |
+| `uploader-event`      | Any `<uc-upload-ctx-provider>` DOM event             | name (e.g. `file-upload-failed`), sanitized `detail`                                                                                                                                                                               |
+| `js-error`            | `window.error`                                       | message, filename, lineno, colno, stack                                                                                                                                                                                            |
+| `unhandled-rejection` | Unhandled promise rejection                          | reason, stack                                                                                                                                                                                                                      |
+| `console`             | `console.warn` / `console.error` invoked             | level, sanitized args                                                                                                                                                                                                              |
+| `probe-host`          | Uploadcare host reachability check (one per host)    | host, url, ok, ms, status, type / error, message                                                                                                                                                                                   |
+| `probe-summary`       | Emitted once after all probes finish                 | startedAt, finishedAt, results[]                                                                                                                                                                                                   |
+| `env-network-change`  | `navigator.connection.change` fires during session   | onLine, connection {effectiveType, downlink, rtt, saveData, type}                                                                                                                                                                  |
+| `speedtest`           | Emitted once when `?speedtest=1` (Cloudflare probe)  | download {bytes,ms,mbps} \| {error}, upload {bytes,ms,mbps} \| {error}                                                                                                                                                             |
 
 **Header safelist.** Anything not on the safelist (auth tokens, cookies, signatures, etc.) is
 dropped. Current list lives in `instrumentation.js` and covers content headers, caching,
@@ -295,18 +302,16 @@ inspection during a session.
 Keys are arrays; values are JSON. Locally, KV is a SQLite file at `./data/kv.db` (gitignored). On
 Deno Deploy, KV is managed and no file lives with the repo.
 
-| Key                                               | Value           | Purpose                                |
-| ------------------------------------------------- | --------------- | -------------------------------------- |
-| `["user", userId]`                                | `UserRecord`    | Anonymous user; created lazily         |
-| `["user_index", createdAt, userId]`               | `userId`        | Time-ordered scan of users             |
-| `["session", sessionId]`                          | `SessionRecord` | Per-page-load session envelope         |
-| `["session_index", createdAt, sessionId]`         | `sessionId`     | Time-ordered scan of all sessions      |
-| `["session_by_user", userId, createdAt, session]` | `sessionId`     | Time-ordered scan of a user's sessions |
-| `["event", sessionId, seq]`                       | `EventRecord`   | One instrumentation event              |
+| Key                                       | Value           | Purpose                           |
+| ----------------------------------------- | --------------- | --------------------------------- |
+| `["session", sessionId]`                  | `SessionRecord` | Per-page-load session envelope    |
+| `["session_index", createdAt, sessionId]` | `sessionId`     | Time-ordered scan of all sessions |
+| `["event", sessionId, seq]`               | `EventRecord`   | One instrumentation event         |
 
-`SessionRecord` includes: `userId`, `sessionId`, `createdAt`, `lastSeenAt`, `lastEventAt`, `env`,
-`pubkey`, `label`, `clientIp`, `eventCount`, `indexed`. `pubkey` and `label` are extracted from
-`env.url`'s query string on first sight and never overwritten.
+`SessionRecord` includes: `sessionId`, `createdAt`, `lastSeenAt`, `lastEventAt`, `env`, `pubkey`,
+`label`, `clientIp`, `eventCount`, `errorCount`, `indexed`. `pubkey` and `label` are extracted from
+`env.url`'s query string on first sight and never overwritten. Older records may still carry a
+`userId` field left over from earlier versions — it's ignored, but harmless.
 
 **Race handling.** If `/api/event` arrives before `/api/session` (e.g., due to network reordering),
 the event handler creates a minimal session record and its index entries. A later `/api/session`
@@ -347,15 +352,15 @@ EOF
       `console.warn/error`; `PerformanceObserver` for Uploadcare resource timings; in-memory
       buffer + periodic flush + `sendBeacon` on `pagehide`.
 - [x] **4. Session/event API + KV storage.** `POST /api/session`, `POST /api/event`,
-      `POST /api/event-beacon`. Persistent anonymous user ID (cookie + localStorage) + per-load
-      session ID. KV schema: `user`, `user_index`, `session`, `session_by_user`, `session_index`,
-      `event`.
+      `POST /api/event-beacon`. Per-page-load session ID. KV schema: `session`, `session_index`,
+      `event`. (Milestone 11 removed the earlier `user` / `user_index` / `session_by_user` entries —
+      the anonymous-user entity turned out to add complexity without much value for support triage.)
 - [x] **5. Public per-session view.** `/session/:id` — event timeline, filter tabs (All / Network /
       Errors / Uploader / Perf / Other), expandable rows, copy/download JSON. Backed by
       `GET /api/session/:id`.
 - [x] **6. Admin dashboard.** `/admin` behind HTTP Basic Auth (`ADMIN_USER` / `ADMIN_PASS` env
-      vars); session list with filters (userId, pubkey, label, hasError) and drill-down. A cookie
-      session (KV-backed) also works for browsers that suppress the native Basic Auth prompt.
+      vars); session list with filters (pubkey, label, hasError) and drill-down. A cookie session
+      (KV-backed) also works for browsers that suppress the native Basic Auth prompt.
 - [x] **7. Polish.** `sendBeacon` on unload wired through; resource-timing correlation on the
       session view (fetch/XHR rows get a `perf` badge and inline `_perf` timing); scenario presets
       via `?scenario=`; text search on the session timeline; session duration in the meta line;
@@ -374,6 +379,12 @@ EOF
       uploader activity (or first error) — visitors who never engage cost nothing. Optional
       `?speedtest=1` runs a Cloudflare download/upload probe and emits a `speedtest` event. Admin
       dashboard has a per-row `×` delete button backed by `DELETE /api/admin/session/:id`.
+- [x] **11. Telemetry filtering, Uploadcare 200-with-error detection, user-entity removal.**
+      Requests to `tlm.uploadcare.com` are tagged and hidden by default; toggle with
+      `?includeTelemetry=1`. Fetch/XHR wrapper sniffs JSON responses from Uploadcare's Upload + REST
+      APIs and promotes 2xx-with-error-body responses into real errors (`errorCount` counts them,
+      session view flags the row red). Anonymous user entity retired — schema, cookies, and admin
+      filter all cleared out. `static/lib/uploadcare_errors.js` covers the known error shapes.
 
 ## Design decisions
 
