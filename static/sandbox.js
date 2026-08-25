@@ -48,7 +48,7 @@ function renderConfigPanel(panel, forwarded, sandbox, meta) {
     }
     panel.append(wrap);
   };
-  block("Identity", { userId: identity.userId, sessionId: identity.sessionId });
+  block("Identity", { sessionId: identity.sessionId });
   block("Meta", meta);
   block("Forwarded to uploader (uc-config attributes)", forwarded);
   block("Sandbox-only", sandbox);

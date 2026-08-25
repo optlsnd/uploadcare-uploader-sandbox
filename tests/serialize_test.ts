@@ -2,6 +2,8 @@ import { assert, assertEquals, assertFalse } from "jsr:@std/assert";
 import {
   bodySize,
   filterHeaders,
+  isTelemetryUrl,
+  isUploadcareApiUrl,
   isUploadcareUrl,
   methodOf,
   parseRawHeaders,
@@ -9,6 +11,24 @@ import {
   sanitize,
   urlOf,
 } from "../static/lib/serialize.js";
+
+Deno.test("isTelemetryUrl: matches only tlm.uploadcare.com", () => {
+  assert(isTelemetryUrl("https://tlm.uploadcare.com/collect"));
+  assert(isTelemetryUrl("http://tlm.uploadcare.com/"));
+  assertFalse(isTelemetryUrl("https://upload.uploadcare.com/base/"));
+  assertFalse(isTelemetryUrl("https://api.uploadcare.com/files/"));
+  assertFalse(isTelemetryUrl("https://ucarecdn.com/uuid/"));
+  assertFalse(isTelemetryUrl("https://tlm.uploadcare.com.evil.com/"));
+  assertFalse(isTelemetryUrl("not a url"));
+});
+
+Deno.test("isUploadcareApiUrl: matches upload + api, not cdn or telemetry", () => {
+  assert(isUploadcareApiUrl("https://upload.uploadcare.com/base/"));
+  assert(isUploadcareApiUrl("https://api.uploadcare.com/files/x/"));
+  assertFalse(isUploadcareApiUrl("https://ucarecdn.com/uuid/"));
+  assertFalse(isUploadcareApiUrl("https://tlm.uploadcare.com/"));
+  assertFalse(isUploadcareApiUrl("https://uploadcare.com/"));
+});
 
 Deno.test("safeHeaderName is case-insensitive and safelisted only", () => {
   assert(safeHeaderName("content-type"));

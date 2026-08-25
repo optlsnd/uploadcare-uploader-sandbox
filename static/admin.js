@@ -1,4 +1,4 @@
-const FILTER_IDS = ["userId", "pubkey", "label"];
+const FILTER_IDS = ["pubkey", "label"];
 const ALL_FILTER_KEYS = [...FILTER_IDS, "hasError"];
 
 function fmtAbsolute(ts) {
@@ -37,7 +37,6 @@ function readInitialFilters() {
   const params = new URLSearchParams(location.search);
   const hasAny = ALL_FILTER_KEYS.some((k) => params.has(k));
   return {
-    userId: params.get("userId") ?? "",
     pubkey: params.get("pubkey") ?? "",
     label: params.get("label") ?? "",
     hasError: hasAny ? params.get("hasError") === "true" : true,
@@ -107,7 +106,6 @@ function renderTable(sessions, filters, onDeleted) {
       el("th", { text: "session" }),
       el("th", { text: "pubkey" }),
       el("th", { text: "label" }),
-      el("th", { text: "user" }),
       el("th", { class: "num", text: "events" }),
       el("th", { class: "num", text: "errors" }),
       el("th", {}),
@@ -134,7 +132,6 @@ function renderTable(sessions, filters, onDeleted) {
       ),
       el("td", { text: s.pubkey ?? "—" }),
       el("td", { text: s.label ?? "—" }),
-      el("td", { class: "mono", title: s.userId, text: shortId(s.userId) }),
       el("td", { class: "num", text: String(s.eventCount ?? 0) }),
       el(
         "td",

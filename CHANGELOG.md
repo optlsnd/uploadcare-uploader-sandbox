@@ -7,6 +7,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Uploadcare API errors returned as HTTP 2xx are now detected.** The fetch/XHR wrapper sniffs JSON
+  responses from `upload.uploadcare.com` and `api.uploadcare.com`, and if the body carries an
+  Uploadcare error shape (`{error: "..."}`, `{error: {status_code, content}}`,
+  `{status: "error", detail}`), it attaches a small `apiError: {code?, message}` summary to the
+  event and counts it toward `errorCount`. Body content is still never persisted. Session view shows
+  the message inline in the row summary and marks the row red. New `static/lib/uploadcare_errors.js`
+  with 14 dedicated tests covering all known shapes.
+- **Telemetry filter.** Requests to `tlm.uploadcare.com` are tagged `isTelemetry: true` and filtered
+  out of `GET /api/session/:id` by default so the timeline isn't drowned in analytics pings. Pass
+  `?includeTelemetry=1` (or tick the new "show telemetry" checkbox in session view) to see them.
+  Data is always stored, only hidden on read.
+
+### Removed
+
+- **`user` entity.** The persistent anonymous user record and its KV artifacts (`["user", …]`,
+  `["user_index", …]`, `["session_by_user", …]`) are gone. The `sandbox-user-id` cookie /
+  localStorage entry is no longer set. Admin dashboard drops the `userId` filter column and the
+  "user" table column; session view drops the `userId` line from the meta. The API tolerates legacy
+  `userId` fields on request bodies for backward compatibility — they're ignored. Existing KV
+  records with `userId` on them still work; only the fields aren't consulted or displayed anymore.
+
 ## [0.3.0] — 2026-07-16
 
 ### Added

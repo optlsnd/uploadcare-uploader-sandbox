@@ -1,6 +1,8 @@
 import {
   bodySize,
   filterHeaders,
+  isTelemetryUrl,
+  isUploadcareApiUrl,
   isUploadcareUrl,
   methodOf,
   parseRawHeaders,
@@ -12,12 +14,12 @@ import { randomUUID } from "/lib/id.js";
 import { captureBaseline, captureNetwork, onNetworkChange } from "/lib/env.js";
 import { DEFAULT_HOSTS, probeHost } from "/lib/probes.js";
 import { isEngagementEvent } from "/lib/engagement.js";
+import { extractFromRawBody, isJsonContentType } from "/lib/uploadcare_errors.js";
 
 const SESSION_ENDPOINT = "/api/session";
 const EVENT_ENDPOINT = "/api/event";
 const BEACON_ENDPOINT = "/api/event-beacon";
 const BEACON_HEADER = "X-Sandbox-Beacon";
-const USER_ID_KEY = "sandbox-user-id";
 const FLUSH_INTERVAL_MS = 3000;
 const FLUSH_BATCH_SIZE = 20;
 
@@ -28,24 +30,6 @@ const originalConsole = {
   error: console.error.bind(console),
 };
 
-function ensureUserId() {
-  let id;
-  try {
-    id = localStorage.getItem(USER_ID_KEY);
-  } catch {
-    /* private mode etc. */
-  }
-  if (!id) id = randomUUID();
-  try {
-    localStorage.setItem(USER_ID_KEY, id);
-  } catch {
-    /* ignore */
-  }
-  document.cookie = `${USER_ID_KEY}=${id}; path=/; max-age=31536000; SameSite=Lax`;
-  return id;
-}
-
-const userId = ensureUserId();
 const sessionId = randomUUID();
 let seq = 0;
 const buffer = [];
@@ -63,7 +47,6 @@ function promoteSession() {
     method: "POST",
     headers: { "content-type": "application/json", [BEACON_HEADER]: "1" },
     body: JSON.stringify({
-      userId,
       sessionId,
       startedAt: Date.now(),
       env: collectEnv(),
@@ -93,7 +76,6 @@ function emit(kind, data) {
   const ev = {
     ts: Date.now(),
     seq: seq++,
-    userId,
     sessionId,
     kind,
     ...data,
@@ -119,7 +101,7 @@ function flush(useBeacon = false) {
   if (!promoted) return; // never ship unengaged sessions
   if (buffer.length === 0) return;
   const batch = buffer.splice(0, buffer.length);
-  const payload = JSON.stringify({ userId, sessionId, events: batch });
+  const payload = JSON.stringify({ sessionId, events: batch });
   if (useBeacon && navigator.sendBeacon) {
     const blob = new Blob([payload], { type: "application/json" });
     navigator.sendBeacon(BEACON_ENDPOINT, blob);
@@ -151,16 +133,34 @@ globalThis.fetch = async function instrumentedFetch(input, init) {
     requestHeaders: filterHeaders(initHeaders),
     requestBodySize: bodySize(init?.body),
     isUploadcare: isUploadcareUrl(url, location.href),
+    isTelemetry: isTelemetryUrl(url, location.href),
   };
   try {
     const response = await originalFetch(input, init);
-    emit("fetch", {
+    const durationMs = Math.round(performance.now() - startedAt);
+    const responseHeaders = filterHeaders(response.headers);
+    const base = {
       ...record,
       status: response.status,
       ok: response.ok,
-      durationMs: Math.round(performance.now() - startedAt),
-      responseHeaders: filterHeaders(response.headers),
-    });
+      durationMs,
+      responseHeaders,
+    };
+    // Uploadcare returns some errors as HTTP 2xx with the error in the
+    // JSON body. Clone before the app touches the response so streaming
+    // consumers still work as expected.
+    if (
+      response.ok &&
+      isUploadcareApiUrl(url, location.href) &&
+      isJsonContentType(response.headers.get("content-type"))
+    ) {
+      try {
+        const raw = await response.clone().text();
+        const apiError = extractFromRawBody(raw);
+        if (apiError) base.apiError = apiError;
+      } catch { /* clone/read failed — ignore */ }
+    }
+    emit("fetch", base);
     return response;
   } catch (err) {
     emit("fetch-error", {
@@ -194,14 +194,29 @@ globalThis.XMLHttpRequest = class InstrumentedXHR extends OriginalXHR {
         requestBodySize: this._sb.requestBodySize,
         durationMs,
         isUploadcare: isUploadcareUrl(this._sb.url, location.href),
+        isTelemetry: isTelemetryUrl(this._sb.url, location.href),
       };
       if (this.readyState === 4 && this.status > 0 && !this._sb.errorType) {
-        emit("xhr", {
+        const responseHeaders = parseRawHeaders(this.getAllResponseHeaders());
+        const ok = this.status >= 200 && this.status < 300;
+        const ev = {
           ...base,
           status: this.status,
-          ok: this.status >= 200 && this.status < 300,
-          responseHeaders: parseRawHeaders(this.getAllResponseHeaders()),
-        });
+          ok,
+          responseHeaders,
+        };
+        if (
+          ok &&
+          isUploadcareApiUrl(this._sb.url, location.href) &&
+          isJsonContentType(responseHeaders["content-type"])
+        ) {
+          try {
+            const raw = typeof this.responseText === "string" ? this.responseText : "";
+            const apiError = extractFromRawBody(raw);
+            if (apiError) ev.apiError = apiError;
+          } catch { /* responseType not text — ignore */ }
+        }
+        emit("xhr", ev);
       } else {
         emit("xhr-error", {
           ...base,
@@ -430,11 +445,10 @@ export function attachUploaderEvents(target) {
   }
 }
 
-export const identity = { userId, sessionId };
+export const identity = { sessionId };
 export { flush };
 
 globalThis.__sandbox = {
-  userId,
   sessionId,
   get buffer() {
     return buffer.slice();

@@ -69,6 +69,19 @@ Deno.test("summarizeEvent: fetch with status and duration", () => {
   assertEquals(s, "POST https://upload.uploadcare.com/base/ → 200 (123ms)");
 });
 
+Deno.test("summarizeEvent: fetch with apiError appends the Uploadcare error", () => {
+  const s = summarizeEvent({
+    kind: "fetch",
+    method: "POST",
+    url: "https://upload.uploadcare.com/base/",
+    status: 200,
+    durationMs: 42,
+    apiError: { code: "400", message: "invalid pubkey" },
+  });
+  assert(s.includes("Uploadcare API error [400]"));
+  assert(s.includes("invalid pubkey"));
+});
+
 Deno.test("summarizeEvent: xhr-error with error object", () => {
   const s = summarizeEvent({
     kind: "xhr-error",
@@ -325,7 +338,6 @@ Deno.test("handleSessionGet: returns session + ordered events", async () => {
     await handleSessionPost(
       kv,
       post("/api/session", {
-        userId: "u1",
         sessionId: "s1",
         env: { url: "http://x/?pubkey=pk" },
       }),
@@ -333,7 +345,6 @@ Deno.test("handleSessionGet: returns session + ordered events", async () => {
     await handleEventPost(
       kv,
       post("/api/event", {
-        userId: "u1",
         sessionId: "s1",
         events: [
           { seq: 2, ts: 30, kind: "fetch" },
@@ -356,7 +367,7 @@ Deno.test("handleSessionGet: session with no events returns empty array", async 
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "s1", env: {} }),
+      post("/api/session", { sessionId: "s1", env: {} }),
     );
     const res = await handleSessionGet(kv, "s1");
     assertEquals(res.status, 200);
@@ -371,7 +382,7 @@ Deno.test("createHandler: GET /api/session/:id dispatches to handleSessionGet", 
   await withKv(async (kv) => {
     await handleSessionPost(
       kv,
-      post("/api/session", { userId: "u1", sessionId: "s1", env: {} }),
+      post("/api/session", { sessionId: "s1", env: {} }),
     );
     const handler = createHandler(kv);
     const res = await handler(new Request("http://x/api/session/s1"));
@@ -386,5 +397,55 @@ Deno.test("createHandler: GET /api/session/missing => 404", async () => {
     const handler = createHandler(kv);
     const res = await handler(new Request("http://x/api/session/nope"));
     assertEquals(res.status, 404);
+  });
+});
+
+Deno.test("handleSessionGet: strips telemetry events by default", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(kv, post("/api/session", { sessionId: "s1", env: {} }));
+    await handleEventPost(
+      kv,
+      post("/api/event", {
+        sessionId: "s1",
+        events: [
+          { seq: 0, ts: 1, kind: "fetch", url: "https://api.uploadcare.com/" },
+          { seq: 1, ts: 2, kind: "fetch", url: "https://tlm.uploadcare.com/", isTelemetry: true },
+          { seq: 2, ts: 3, kind: "js-error", message: "x" },
+        ],
+      }),
+    );
+
+    const stripped = await handleSessionGet(kv, "s1");
+    const strippedBody = await stripped.json();
+    assertEquals(strippedBody.events.length, 2);
+    assertEquals(strippedBody.events.map((e: { seq: number }) => e.seq), [0, 2]);
+
+    const included = await handleSessionGet(kv, "s1", { includeTelemetry: true });
+    const includedBody = await included.json();
+    assertEquals(includedBody.events.length, 3);
+  });
+});
+
+Deno.test("createHandler: passes ?includeTelemetry=1 through", async () => {
+  await withKv(async (kv) => {
+    await handleSessionPost(kv, post("/api/session", { sessionId: "s1", env: {} }));
+    await handleEventPost(
+      kv,
+      post("/api/event", {
+        sessionId: "s1",
+        events: [
+          { seq: 0, ts: 1, kind: "fetch", isTelemetry: true },
+        ],
+      }),
+    );
+    const handler = createHandler(kv);
+
+    const withoutFlag = await handler(new Request("http://x/api/session/s1"));
+    const withoutBody = await withoutFlag.json();
+    assertEquals(withoutBody.events.length, 0);
+
+    const withFlag = await handler(new Request("http://x/api/session/s1?includeTelemetry=1"));
+    const withBody = await withFlag.json();
+    assertEquals(withBody.events.length, 1);
   });
 });

@@ -3,7 +3,6 @@ import { serveDir } from "@std/http/file-server";
 type Env = Record<string, unknown> | null;
 
 export type SessionRecord = {
-  userId: string;
   sessionId: string;
   createdAt: number;
   lastSeenAt: number;
@@ -21,7 +20,6 @@ export type AdminConfig = { user: string; pass: string } | null;
 
 export type SessionListItem = {
   sessionId: string;
-  userId: string;
   createdAt: number;
   lastEventAt: number | null;
   pubkey: string | null;
@@ -30,17 +28,10 @@ export type SessionListItem = {
   errorCount: number;
 };
 
-export type UserRecord = {
-  userId: string;
-  createdAt: number;
-  lastSeenAt: number;
-};
-
 export type EventRecord = {
   ts: number;
   seq: number;
   kind: string;
-  userId: string;
   sessionId: string;
   [key: string]: unknown;
 };
@@ -79,32 +70,19 @@ function tryParseUrl(input: unknown): URL | null {
 export async function upsertSession(
   kv: Deno.Kv,
   opts: {
-    userId: string;
     sessionId: string;
     clientIp: string | null;
     env?: Env;
     providedCreatedAt?: number;
   },
 ): Promise<SessionRecord> {
-  const { userId, sessionId, clientIp } = opts;
+  const { sessionId, clientIp } = opts;
   const now = Date.now();
 
   const sessionKey = ["session", sessionId] as const;
-  const userKey = ["user", userId] as const;
 
-  const [existingSessionEntry, existingUserEntry] = await kv.getMany<
-    [SessionRecord, UserRecord]
-  >([sessionKey, userKey]);
-
+  const existingSessionEntry = await kv.get<SessionRecord>(sessionKey);
   const existingSession = existingSessionEntry.value;
-  const existingUser = existingUserEntry.value;
-
-  const user: UserRecord = existingUser ?? {
-    userId,
-    createdAt: now,
-    lastSeenAt: now,
-  };
-  user.lastSeenAt = now;
 
   let session: SessionRecord;
   if (existingSession) {
@@ -121,7 +99,6 @@ export async function upsertSession(
     const createdAt = Number(opts.providedCreatedAt) || now;
     const url = tryParseUrl((opts.env as { url?: string })?.url);
     session = {
-      userId,
       sessionId,
       createdAt,
       lastSeenAt: now,
@@ -135,14 +112,9 @@ export async function upsertSession(
   }
 
   const tx = kv.atomic();
-  tx.set(userKey, user);
   tx.set(sessionKey, session);
-  if (!existingUser) {
-    tx.set(["user_index", user.createdAt, userId], userId);
-  }
   if (!session.indexed) {
     tx.set(["session_index", session.createdAt, sessionId], sessionId);
-    tx.set(["session_by_user", userId, session.createdAt, sessionId], sessionId);
     session.indexed = true;
     tx.set(sessionKey, session);
   }
@@ -156,16 +128,14 @@ export async function handleSessionPost(
   req: Request,
 ): Promise<Response> {
   const body = await readJson<{
-    userId?: string;
     sessionId?: string;
     startedAt?: number;
     env?: Env;
   }>(req);
-  if (!body?.userId || !body?.sessionId) {
-    return json({ error: "userId and sessionId required" }, { status: 400 });
+  if (!body?.sessionId) {
+    return json({ error: "sessionId required" }, { status: 400 });
   }
   const session = await upsertSession(kv, {
-    userId: body.userId,
     sessionId: body.sessionId,
     clientIp: clientIpOf(req),
     env: body.env ?? null,
@@ -179,7 +149,16 @@ function isErrorEvent(ev: EventRecord): boolean {
   if (kind === "js-error" || kind === "unhandled-rejection") return true;
   if (kind === "fetch-error" || kind === "xhr-error") return true;
   if (kind === "console" && (ev as { level?: unknown }).level === "error") return true;
+  // Uploadcare API errors returned as HTTP 2xx with an error body.
+  if (
+    (kind === "fetch" || kind === "xhr") &&
+    (ev as { apiError?: unknown }).apiError
+  ) return true;
   return false;
+}
+
+function isTelemetryEvent(ev: EventRecord): boolean {
+  return (ev as { isTelemetry?: unknown }).isTelemetry === true;
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -373,7 +352,6 @@ export async function handleAdminLogoutPost(
 }
 
 export type SessionFilters = {
-  userId: string | null;
   pubkey: string | null;
   label: string | null;
   hasError: boolean;
@@ -381,7 +359,6 @@ export type SessionFilters = {
 
 export function readSessionFilters(url: URL): SessionFilters {
   return {
-    userId: url.searchParams.get("userId"),
     pubkey: url.searchParams.get("pubkey"),
     label: url.searchParams.get("label"),
     hasError: url.searchParams.get("hasError") === "true",
@@ -389,7 +366,6 @@ export function readSessionFilters(url: URL): SessionFilters {
 }
 
 export function matchesSessionFilter(s: SessionRecord, f: SessionFilters): boolean {
-  if (f.userId && s.userId !== f.userId) return false;
   if (f.pubkey && s.pubkey !== f.pubkey) return false;
   if (f.label && s.label !== f.label) return false;
   if (f.hasError && (s.errorCount ?? 0) === 0) return false;
@@ -419,7 +395,6 @@ export async function handleAdminSessions(
     if (!matchesSessionFilter(session, filters)) continue;
     sessions.push({
       sessionId: session.sessionId,
-      userId: session.userId,
       createdAt: session.createdAt,
       lastEventAt: session.lastEventAt ?? null,
       pubkey: session.pubkey,
@@ -485,11 +460,13 @@ export async function handleAdminSessionNeighbors(
 export async function handleSessionGet(
   kv: Deno.Kv,
   sessionId: string,
+  opts: { includeTelemetry?: boolean } = {},
 ): Promise<Response> {
   const entry = await kv.get<SessionRecord>(["session", sessionId]);
   if (!entry.value) return json({ error: "session not found" }, { status: 404 });
   const events: EventRecord[] = [];
   for await (const e of kv.list<EventRecord>({ prefix: ["event", sessionId] })) {
+    if (!opts.includeTelemetry && isTelemetryEvent(e.value)) continue;
     events.push(e.value);
   }
   return json({ session: entry.value, events });
@@ -497,10 +474,7 @@ export async function handleSessionGet(
 
 /**
  * Delete a session and every artifact keyed under it: the session
- * record, both index entries, and every event row. The `["user", ...]`
- * record is intentionally left alone — a user may own other sessions,
- * and even if this was their only one, the anonymous user record
- * itself is negligible in size.
+ * record, its index entry, and every event row.
  */
 export async function handleAdminDeleteSession(
   kv: Deno.Kv,
@@ -518,7 +492,6 @@ export async function handleAdminDeleteSession(
 
   await kv.delete(["session", sessionId]);
   await kv.delete(["session_index", session.createdAt, sessionId]);
-  await kv.delete(["session_by_user", session.userId, session.createdAt, sessionId]);
 
   return json({ ok: true, deletedEvents });
 }
@@ -528,18 +501,16 @@ export async function handleEventPost(
   req: Request,
 ): Promise<Response> {
   const body = await readJson<{
-    userId?: string;
     sessionId?: string;
     events?: EventRecord[];
   }>(req);
-  if (!body?.userId || !body?.sessionId) {
-    return json({ error: "userId and sessionId required" }, { status: 400 });
+  if (!body?.sessionId) {
+    return json({ error: "sessionId required" }, { status: 400 });
   }
   const events = Array.isArray(body.events) ? body.events : [];
   if (events.length === 0) return json({ ok: true, stored: 0 });
 
   const session = await upsertSession(kv, {
-    userId: body.userId,
     sessionId: body.sessionId,
     clientIp: clientIpOf(req),
   });
@@ -617,7 +588,9 @@ export function createHandler(
     }
     const apiSessionMatch = pathname.match(SESSION_API_RE);
     if (req.method === "GET" && apiSessionMatch) {
-      return handleSessionGet(kv, apiSessionMatch[1]!);
+      return handleSessionGet(kv, apiSessionMatch[1]!, {
+        includeTelemetry: url.searchParams.get("includeTelemetry") === "1",
+      });
     }
     if (req.method === "GET" && pathname === "/api/admin/sessions") {
       const denied = await checkAdminAuth(kv, req, admin);

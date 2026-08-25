@@ -24,6 +24,34 @@ export const HEADER_SAFELIST = new Set([
 
 export const UPLOADCARE_HOST = /(^|\.)(uploadcare\.com|ucarecdn\.com|ucarecdn\.io)$/i;
 
+export const TELEMETRY_HOSTS = new Set(["tlm.uploadcare.com"]);
+
+/**
+ * Uploadcare hosts that speak the customer-facing API (Upload API + REST API).
+ * Used to gate the JSON-in-a-200 error sniff.
+ */
+export const UPLOADCARE_API_HOSTS = new Set(["upload.uploadcare.com", "api.uploadcare.com"]);
+
+/** @param {string} url @param {string} [base] @returns {boolean} */
+export function isTelemetryUrl(url, base) {
+  try {
+    const u = new URL(url, base);
+    return TELEMETRY_HOSTS.has(u.host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** @param {string} url @param {string} [base] @returns {boolean} */
+export function isUploadcareApiUrl(url, base) {
+  try {
+    const u = new URL(url, base);
+    return UPLOADCARE_API_HOSTS.has(u.host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /** @param {unknown} name */
 export function safeHeaderName(name) {
   return HEADER_SAFELIST.has(String(name).toLowerCase());
