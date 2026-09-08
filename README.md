@@ -24,7 +24,8 @@ locally.
 - Hosting: [Deno Deploy](https://deno.com/deploy)
 - Storage: Deno KV (indefinite retention)
 - Server: plain `Deno.serve` + `@std/http` static file serving (no framework)
-- Uploader: `@uploadcare/file-uploader@1.31.2` loaded from jsDelivr
+- Uploader: `@uploadcare/file-uploader` loaded from jsDelivr — defaults to `latest`, pinnable via
+  `?ucVersion=`
 
 ## Getting started
 
@@ -48,20 +49,21 @@ Open `http://localhost:8000/?pubkey=YOUR_PUBLIC_KEY` and upload a file.
 Tests run with Deno's built-in runner against an in-memory KV (`Deno.openKv(":memory:")`) — no port
 binding, no shared state between tests. Suites:
 
-| File                              | Covers                                                                                                                       |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `tests/config_test.ts`            | Query-string parsing, kebab-case conversion, reserved-key split.                                                             |
-| `tests/serialize_test.ts`         | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                                           |
-| `tests/server_test.ts`            | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                                          |
-| `tests/session_test.ts`           | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.                           |
-| `tests/admin_test.ts`             | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating.                    |
-| `tests/presets_test.ts`           | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).                               |
-| `tests/id_test.ts`                | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                                       |
-| `tests/env_test.ts`               | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.                         |
-| `tests/probes_test.ts`            | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                                    |
-| `tests/engagement_test.ts`        | `isEngagementEvent` promotes on upload activity / any error; ignores env, perf, and passive events.                          |
-| `tests/speedtest_test.ts`         | `downloadSpeed` / `uploadSpeed` math + error paths; `runSpeedtest` partial failure isolation.                                |
-| `tests/uploadcare_errors_test.ts` | `extractUploadcareError` covers all known Uploadcare error body shapes; `extractFromRawBody` safely parses raw JSON strings. |
+| File                              | Covers                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/config_test.ts`            | Query-string parsing, kebab-case conversion, reserved-key split.                                                                |
+| `tests/serialize_test.ts`         | Header safelist, HTTP header parsing, body sizing, URL classification, `sanitize`.                                              |
+| `tests/server_test.ts`            | `handleSessionPost` / `handleEventPost` / `createHandler`; race handling; indexing.                                             |
+| `tests/session_test.ts`           | `classifyEvent`, `summarizeEvent`, `relativeTimestamp`, `countByCategory`, and `handleSessionGet`.                              |
+| `tests/admin_test.ts`             | `checkAdminAuth` (503/401/200 paths), `handleAdminSessions` filters, `errorCount` tracking, admin gating.                       |
+| `tests/presets_test.ts`           | Scenario preset registry + `applyPreset` precedence (unknown / nullish name / override rules).                                  |
+| `tests/id_test.ts`                | `randomUUID` shape, uniqueness, and `crypto.randomUUID` fallback path.                                                          |
+| `tests/env_test.ts`               | `captureBaseline` / `captureNetwork` shape + null-safety; `onNetworkChange` subscribe / unsubscribe.                            |
+| `tests/probes_test.ts`            | `probeHost` (success, network error, abort/timeout, custom path) + `probeHosts` ordering.                                       |
+| `tests/engagement_test.ts`        | `isEngagementEvent` promotes on upload activity / any error; ignores env, perf, and passive events.                             |
+| `tests/speedtest_test.ts`         | `downloadSpeed` / `uploadSpeed` math + error paths; `runSpeedtest` partial failure isolation.                                   |
+| `tests/uploadcare_errors_test.ts` | `extractUploadcareError` covers all known Uploadcare error body shapes; `extractFromRawBody` safely parses raw JSON strings.    |
+| `tests/uploader_version_test.ts`  | `resolveUploaderVersion` accepts semver + `latest`, silently falls back for garbage; `uploaderCdnUrl` builds the jsDelivr path. |
 
 Every future milestone ships with matching tests as part of the same step.
 
@@ -79,13 +81,14 @@ kebab-case are accepted; camelCase is normalized to kebab-case before being appl
 
 Reserved sandbox-only params (never forwarded to the uploader):
 
-| Param       | Purpose                                                                           |
-| ----------- | --------------------------------------------------------------------------------- |
-| `variant`   | Uploader variant: `regular` (default), `inline`, `minimal`                        |
-| `label`     | Free-form tag attached to the session                                             |
-| `scenario`  | Apply a named preset (see below)                                                  |
-| `_debug`    | Enable extra debug UI                                                             |
-| `speedtest` | `1` runs a Cloudflare-backed speed probe on load. Off by default (~15 MB traffic) |
+| Param       | Purpose                                                                                                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `variant`   | Uploader variant: `regular` (default), `inline`, `minimal`                                                                                                                      |
+| `label`     | Free-form tag attached to the session                                                                                                                                           |
+| `scenario`  | Apply a named preset (see below)                                                                                                                                                |
+| `_debug`    | Enable extra debug UI                                                                                                                                                           |
+| `speedtest` | `1` runs a Cloudflare-backed speed probe on load. Off by default (~15 MB traffic)                                                                                               |
+| `ucVersion` | Pin the Uploadcare File Uploader version (`1.31.2`, `1.32.0-beta.1`, `latest`). Defaults to `latest`. Anything not matching semver or `latest` silently falls back to `latest`. |
 
 If `pubkey` is missing, the sandbox falls back to `demopublickey` (Uploadcare's public demo key) so
 the uploader always mounts. Any user-supplied `pubkey` overrides the default. All other params fall
@@ -250,6 +253,7 @@ static/
     engagement.js         # "did the user actually use this session?" predicate
     speedtest.js          # opt-in Cloudflare download/upload speed probe
     uploadcare_errors.js  # detects HTTP-200-with-error-body Uploadcare responses
+    uploader_version.js   # validates ?ucVersion and builds the jsDelivr URL
 tests/
   server_test.ts          # session/event handlers against :memory: KV
   config_test.ts          # config.js unit tests

@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`?ucVersion=<semver | latest>`** — pin the Uploadcare File Uploader version loaded from
+  jsDelivr. Accepts explicit semver (`1.31.2`, `1.32.0-beta.1`) or the moving `latest` tag. Missing
+  or malformed values silently fall back to `latest`. The resolved uploader URL, requested value,
+  and validity flag appear in the sandbox page's Meta panel. Sandbox is no longer pinned to a single
+  uploader version — reproducing an old bug is now `?ucVersion=1.28.0`. New
+  `static/lib/uploader_version.js` + 7 dedicated tests.
+
+### Changed
+
+- **Uploader import is now dynamic.** The static jsDelivr import was replaced with a dynamic
+  `import()` after the version is resolved. If the CDN load fails (unknown version, network block),
+  the sandbox now shows an inline placeholder + surfaces the error in the Meta panel instead of
+  crashing the page.
+
 ## [0.4.0] — 2026-07-16
 
 ### Added

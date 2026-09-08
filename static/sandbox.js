@@ -1,11 +1,9 @@
 import { attachUploaderEvents, identity } from "/instrumentation.js";
 import { applyDefaults, parseQuery } from "/lib/config.js";
 import { applyPreset, PRESET_NAMES } from "/lib/presets.js";
-import * as UC from "https://cdn.jsdelivr.net/npm/@uploadcare/file-uploader@1.31.2/web/file-uploader.min.js";
+import { resolveUploaderVersion, uploaderCdnUrl } from "/lib/uploader_version.js";
 
-UC.defineComponents(UC);
-
-const RESERVED_KEYS = new Set(["variant", "label", "scenario", "_debug"]);
+const RESERVED_KEYS = new Set(["variant", "label", "scenario", "ucVersion", "_debug"]);
 const VALID_VARIANTS = new Set(["regular", "inline", "minimal"]);
 
 function mountUploader(slot, variant, forwarded) {
@@ -67,7 +65,7 @@ function renderInsecureBanner() {
   document.body.prepend(banner);
 }
 
-function main() {
+async function main() {
   renderInsecureBanner();
   const slot = document.getElementById("uploader-slot");
   const panel = document.getElementById("config-panel");
@@ -79,15 +77,42 @@ function main() {
   const scenarioApplied = sandbox.scenario && PRESET_NAMES.includes(sandbox.scenario)
     ? sandbox.scenario
     : null;
-  const { ctxName, ctxProvider } = mountUploader(slot, variant, forwarded);
-  attachUploaderEvents(ctxProvider);
-  renderConfigPanel(panel, forwarded, sandbox, {
+
+  const resolvedVersion = resolveUploaderVersion(sandbox.ucVersion);
+  const uploaderUrl = uploaderCdnUrl(resolvedVersion.version);
+  const meta = {
     variant,
-    ctxName,
-    mounted: true,
+    mounted: false,
     scenarioApplied,
     availableScenarios: PRESET_NAMES,
-  });
+    uploaderVersion: resolvedVersion.version,
+    uploaderVersionRequested: resolvedVersion.requested,
+    uploaderVersionValid: resolvedVersion.ok,
+    uploaderUrl,
+  };
+  renderConfigPanel(panel, forwarded, sandbox, meta);
+
+  let UC;
+  try {
+    UC = await import(uploaderUrl);
+  } catch (err) {
+    slot.innerHTML = "";
+    const msg = document.createElement("div");
+    msg.className = "placeholder";
+    msg.textContent = `Failed to load uploader ${resolvedVersion.version}: ${err}`;
+    slot.append(msg);
+    renderConfigPanel(panel, forwarded, sandbox, {
+      ...meta,
+      mounted: false,
+      loadError: String(err),
+    });
+    return;
+  }
+  UC.defineComponents(UC);
+
+  const { ctxName, ctxProvider } = mountUploader(slot, variant, forwarded);
+  attachUploaderEvents(ctxProvider);
+  renderConfigPanel(panel, forwarded, sandbox, { ...meta, ctxName, mounted: true });
 }
 
 main();
